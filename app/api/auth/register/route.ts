@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       password: hashedPassword,
     });
 
-    const token = signToken({
+    const token = await signToken({
       userId: user._id.toString(),
       email: user.email,
       name: user.name,

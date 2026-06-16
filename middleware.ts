@@ -1,23 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "./lib/auth";
 
-const PUBLIC_PATHS = ["/login", "/register", "/api/auth/login", "/api/auth/register"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/api/auth/login",
+  "/api/auth/register",
+];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  // Allow webhook endpoint (authenticated by secret header, not JWT)
   if (pathname.startsWith("/api/webhook")) {
     return NextResponse.next();
   }
 
-  // Check auth for dashboard routes and protected API routes
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/projects") || pathname.startsWith("/api/")) {
+  // Internal endpoints (cron / master workflow) authenticate via x-internal-secret,
+  // not a JWT cookie. Let them through; the route handler re-validates the secret.
+  const internalSecret = request.headers.get("x-internal-secret");
+  if (internalSecret && internalSecret === process.env.WEBHOOK_SECRET) {
+    return NextResponse.next();
+  }
+
+  const needsAuth =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/projects") ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/api/");
+
+  if (needsAuth) {
     const token = request.cookies.get("auth_token")?.value;
 
     if (!token) {
@@ -27,7 +42,7 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
 
-    const payload = verifyToken(token);
+    const payload = await verifyToken(token);
     if (!payload) {
       if (pathname.startsWith("/api/")) {
         return NextResponse.json({ error: "Invalid token" }, { status: 401 });
@@ -37,7 +52,6 @@ export function middleware(request: NextRequest) {
       return response;
     }
 
-    // Inject user info into headers for API routes
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-user-id", payload.userId);
     requestHeaders.set("x-user-email", payload.email);
@@ -46,11 +60,13 @@ export function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // Root redirect
   if (pathname === "/") {
     const token = request.cookies.get("auth_token")?.value;
-    if (token && verifyToken(token)) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (token) {
+      const payload = await verifyToken(token);
+      if (payload) {
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
     }
     return NextResponse.redirect(new URL("/login", request.url));
   }

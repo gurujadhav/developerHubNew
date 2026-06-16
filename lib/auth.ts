@@ -1,7 +1,7 @@
-import jwt from "jsonwebtoken";
+import { SignJWT, jwtVerify } from "jose";
 import { NextRequest } from "next/server";
 
-const JWT_SECRET = process.env.JWT_SECRET!;
+const getSecret = () => new TextEncoder().encode(process.env.JWT_SECRET!);
 
 export interface JwtPayload {
   userId: string;
@@ -9,32 +9,29 @@ export interface JwtPayload {
   name: string;
 }
 
-export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+export async function signToken(payload: JwtPayload): Promise<string> {
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(getSecret());
 }
 
-export function verifyToken(token: string): JwtPayload | null {
+export async function verifyToken(token: string): Promise<JwtPayload | null> {
   try {
-    return jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const { payload } = await jwtVerify(token, getSecret());
+    return payload as unknown as JwtPayload;
   } catch {
     return null;
   }
 }
 
-export function getTokenFromRequest(request: NextRequest): string | null {
-  const cookieToken = request.cookies.get("auth_token")?.value;
-  if (cookieToken) return cookieToken;
-
-  const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    return authHeader.substring(7);
-  }
-
-  return null;
-}
-
-export function getUserFromRequest(request: NextRequest): JwtPayload | null {
-  const token = getTokenFromRequest(request);
+export async function getUserFromRequest(
+  request: NextRequest
+): Promise<JwtPayload | null> {
+  const token =
+    request.cookies.get("auth_token")?.value ??
+    request.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   return verifyToken(token);
 }
@@ -44,6 +41,6 @@ export const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
   sameSite: "lax" as const,
-  maxAge: 60 * 60 * 24 * 7, // 7 days
+  maxAge: 60 * 60 * 24 * 7,
   path: "/",
 };

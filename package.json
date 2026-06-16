@@ -14,12 +14,11 @@
     "react-dom": "^19",
     "mongoose": "^8.3.4",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
+    "jose": "^5.9.6",
     "lucide-react": "^0.469.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

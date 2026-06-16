@@ -68,7 +68,8 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 export default function ProjectPage() {
-  const { id } = useParams<{ id: string }>();
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
