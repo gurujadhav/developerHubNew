@@ -62,6 +62,17 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Normalize secrets (strip stray newlines/whitespace)
+        run: |
+          # Secrets pasted with a trailing newline corrupt header values
+          # (e.g. "Authorization: Bearer <token>\n"), which breaks request
+          # framing and yields "Problems parsing JSON". Trim them once here.
+          {
+            echo "GH_TOKEN=$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
+            echo "WEBHOOK_SECRET=$(printf '%s' "$WEBHOOK_SECRET" | tr -d '[:space:]')"
+            echo "VERCEL_APP_URL=$(printf '%s' "$VERCEL_APP_URL" | tr -d '[:space:]')"
+          } >> "$GITHUB_ENV"
+
       - name: Pick least-loaded server workflow
         id: pick-server
         run: |
@@ -190,6 +201,14 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Normalize secrets (strip stray newlines/whitespace)
+        run: |
+          {
+            echo "GH_TOKEN=$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
+            echo "WEBHOOK_SECRET=$(printf '%s' "$WEBHOOK_SECRET" | tr -d '[:space:]')"
+            echo "VERCEL_APP_URL=$(printf '%s' "$VERCEL_APP_URL" | tr -d '[:space:]')"
+          } >> "$GITHUB_ENV"
+
       - name: Fetch all running projects
         id: fetch
         run: |

@@ -44,6 +44,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, repoUrl, pat, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId } = body;
 
+    // Trim the PAT — a stray trailing newline (common when pasting tokens)
+    // corrupts the git clone URL and downstream auth headers.
+    const cleanPat = (pat ?? "").trim();
+
     if (!name || !repoUrl) {
       return NextResponse.json(
         { error: "name and repoUrl are required" },
@@ -53,7 +57,7 @@ export async function POST(request: NextRequest) {
 
     // A PAT is only needed for private repos. If none was provided, confirm the
     // repo is publicly cloneable before kicking off a deployment that would fail.
-    if (!pat) {
+    if (!cleanPat) {
       const access = await checkRepoAccess(repoUrl);
       if (!access.accessible || access.isPrivate) {
         return NextResponse.json(
@@ -72,7 +76,7 @@ export async function POST(request: NextRequest) {
       userId,
       name: name.trim(),
       repoUrl: repoUrl.trim(),
-      pat: pat || "",
+      pat: cleanPat,
       envVars: envVars ?? [],
       runCommand: runCommand?.trim() || "pnpm dev",
       port: port ?? 3000,
@@ -90,7 +94,7 @@ export async function POST(request: NextRequest) {
         action: "deploy_new",
         projectId: project._id.toString(),
         repoUrl,
-        pat: pat || "",
+        pat: cleanPat,
         envB64,
         runCommand: runCommand?.trim() || "pnpm dev",
         port: port ?? 3000,
