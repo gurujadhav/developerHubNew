@@ -1,0 +1,141 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy-950: #020818;
+  --navy-900: #050D2D;
+  --navy-800: #0A1845;
+  --navy-700: #0E2260;
+  --gold-500: #D4A855;
+  --gold-400: #E8C07A;
+  --crimson-500: #E63946;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background-color: var(--navy-950);
+  color: #e8eaf6;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--navy-900);
+}
+::-webkit-scrollbar-thumb {
+  background: #1C3A9E;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-500);
+}
+
+/* Selection */
+::selection {
+  background: rgba(212, 168, 85, 0.3);
+  color: #fff;
+}
+
+/* Focus rings */
+:focus-visible {
+  outline: 2px solid var(--gold-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer components {
+  /* Card */
+  .card {
+    @apply bg-surface rounded-xl border border-navy-700/60 shadow-card;
+  }
+
+  .card-raised {
+    @apply bg-surface-raised rounded-xl border border-navy-600/60 shadow-card;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 bg-gold-500 text-navy-950 font-semibold rounded-lg
+           hover:bg-gold-400 active:bg-gold-600 transition-all duration-150
+           focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-900
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 bg-navy-700 text-gold-400 font-semibold rounded-lg
+           border border-navy-600 hover:bg-navy-600 hover:border-gold-500/40
+           transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 bg-crimson-600 text-white font-semibold rounded-lg
+           hover:bg-crimson-500 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 text-slate-300 font-medium rounded-lg
+           hover:bg-navy-800 hover:text-white transition-all duration-150;
+  }
+
+  /* Form inputs */
+  .input {
+    @apply w-full bg-navy-800 border border-navy-600 rounded-lg px-3.5 py-2.5
+           text-white placeholder:text-slate-500 font-mono text-sm
+           focus:outline-none focus:border-gold-500/60 focus:ring-1 focus:ring-gold-500/30
+           transition-colors;
+  }
+
+  .input-label {
+    @apply block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5;
+  }
+
+  /* Status badges */
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold;
+  }
+
+  .badge-running {
+    @apply badge bg-emerald-900/50 text-emerald-400 border border-emerald-700/50;
+  }
+
+  .badge-deploying {
+    @apply badge bg-gold-500/10 text-gold-400 border border-gold-500/30;
+  }
+
+  .badge-failed {
+    @apply badge bg-crimson-700/20 text-crimson-400 border border-crimson-600/30;
+  }
+
+  .badge-pending {
+    @apply badge bg-navy-700/50 text-slate-400 border border-navy-600/50;
+  }
+
+  .badge-stopped {
+    @apply badge bg-navy-700/50 text-slate-500 border border-navy-600/50;
+  }
+
+  /* Section heading */
+  .section-title {
+    @apply font-display font-semibold text-lg text-white;
+  }
+
+  /* Divider */
+  .divider {
+    @apply border-t border-navy-700/60 my-4;
+  }
+}
