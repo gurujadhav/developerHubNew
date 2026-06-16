@@ -138,7 +138,7 @@ jobs:
           for i in $(seq 1 60); do
             if curl -sf "http://localhost:${PORT}" > /dev/null 2>&1; then
               echo "App is up after ${i}× 5 s"
-              echo "APP_READY=true" >> "$GITHUB_ENV"
+              APP_READY=true
               break
             fi
             sleep 5
