@@ -62,10 +62,10 @@ jobs:
           cloudflared --version
 
       # ── 2. Node.js ───────────────────────────────────────────────────────────
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       # ── 3. pnpm ──────────────────────────────────────────────────────────────
       - name: Setup pnpm
@@ -80,7 +80,9 @@ jobs:
           PAT: ${{ inputs.pat }}
           REPO_URL: ${{ inputs.repo_url }}
         run: |
-          # Strip scheme and embed PAT when provided (public repos clone without one)
+          # Trim stray whitespace/newlines a pasted PAT may carry, then embed it
+          # only when present (public repos clone without one).
+          PAT="$(printf '%s' "$PAT" | tr -d '[:space:]')"
           REPO_CLEAN=$(echo "$REPO_URL" | sed 's|https://||')
           if [ -n "$PAT" ]; then
             git clone --depth 1 "https://${PAT}@${REPO_CLEAN}" project
@@ -105,7 +107,9 @@ jobs:
           ENV_B64: ${{ inputs.env_b64 }}
         run: |
           echo "$ENV_B64" | base64 -d > project/.env
-          echo ".env written ($(wc -l < project/.env) lines)"
+          # Ensure a trailing newline so the final variable is well-formed.
+          [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
+          echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
 
       # ── 7. Install dependencies ──────────────────────────────────────────────
       - name: Install dependencies
