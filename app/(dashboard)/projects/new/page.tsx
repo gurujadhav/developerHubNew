@@ -62,13 +62,15 @@ export default function NewProjectPage() {
     cfKvNamespaceId: "",
   });
 
-  // PAT verification state
+  // Repo / PAT verification state
   const [patVerifying, setPatVerifying] = useState(false);
   const [patResult, setPatResult] = useState<{
     valid: boolean;
     githubUser?: string;
     repoName?: string;
     repoPrivate?: boolean;
+    repoPublic?: boolean;
+    needsPat?: boolean;
     error?: string;
   } | null>(null);
 
@@ -77,15 +79,15 @@ export default function NewProjectPage() {
     if (field === "pat" || field === "repoUrl") setPatResult(null);
   };
 
-  const verifyPat = async () => {
-    if (!form.pat) return;
+  const verifyRepo = async () => {
+    if (!form.repoUrl) return;
     setPatVerifying(true);
     setPatResult(null);
     try {
       const res = await fetch("/api/verify-pat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pat: form.pat, repoUrl: form.repoUrl }),
+        body: JSON.stringify({ pat: form.pat || undefined, repoUrl: form.repoUrl }),
       });
       const data = await res.json();
       setPatResult(data);
@@ -119,7 +121,7 @@ export default function NewProjectPage() {
       case 1:
         return form.name.trim().length >= 1;
       case 2:
-        return form.repoUrl.trim().length > 0 && form.pat.trim().length > 0 && patResult?.valid === true;
+        return form.repoUrl.trim().length > 0 && patResult?.valid === true;
       case 3:
         return form.runCommand.trim().length > 0 && Number(form.port) > 0;
       case 4:
@@ -257,7 +259,12 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="input-label">GitHub Personal Access Token (PAT)</label>
+              <label className="input-label">
+                GitHub Personal Access Token (PAT){" "}
+                <span className="text-slate-600 font-normal normal-case">
+                  (only for private repos)
+                </span>
+              </label>
               <input
                 type="password"
                 className="input"
@@ -266,18 +273,19 @@ export default function NewProjectPage() {
                 onChange={(e) => update("pat", e.target.value)}
               />
               <p className="text-xs text-slate-600 mt-1.5">
-                Needs <code className="text-gold-500">repo</code> scope to read private repos
+                Public repos clone without a token. For private repos, use a PAT with{" "}
+                <code className="text-gold-500">repo</code> scope.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={verifyPat}
-              disabled={patVerifying || !form.pat || !form.repoUrl}
+              onClick={verifyRepo}
+              disabled={patVerifying || !form.repoUrl}
               className="btn-secondary text-sm"
             >
               {patVerifying ? <Loader2 size={14} className="animate-spin" /> : <Key size={14} />}
-              {patVerifying ? "Verifying…" : "Verify PAT & repo access"}
+              {patVerifying ? "Checking…" : "Check repository access"}
             </button>
 
             {patResult && (
@@ -292,14 +300,25 @@ export default function NewProjectPage() {
                   <div className="flex items-start gap-2">
                     <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-medium">Verified — access confirmed</p>
-                      {patResult.githubUser && (
-                        <p className="text-xs opacity-80 mt-0.5">
-                          GitHub user: <strong>{patResult.githubUser}</strong>
-                          {patResult.repoName && <> · Repo: <strong>{patResult.repoName}</strong></>}
-                          {patResult.repoPrivate && <> · Private</>}
-                        </p>
-                      )}
+                      <p className="font-medium">
+                        {patResult.repoPublic
+                          ? "Public repository — no token required"
+                          : "Verified — private repo access confirmed"}
+                      </p>
+                      <p className="text-xs opacity-80 mt-0.5">
+                        {patResult.githubUser && (
+                          <>
+                            GitHub user: <strong>{patResult.githubUser}</strong>
+                            {patResult.repoName && " · "}
+                          </>
+                        )}
+                        {patResult.repoName && (
+                          <>
+                            Repo: <strong>{patResult.repoName}</strong>
+                          </>
+                        )}
+                        {patResult.repoPublic ? <> · Public</> : patResult.repoPrivate && <> · Private</>}
+                      </p>
                     </div>
                   </div>
                 ) : (

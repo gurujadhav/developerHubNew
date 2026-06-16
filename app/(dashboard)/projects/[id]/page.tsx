@@ -74,6 +74,7 @@ export default function ProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [redeploying, setRedeploying] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const fetchProject = async (silent = false) => {
@@ -104,6 +105,16 @@ export default function ProjectPage() {
       router.push("/projects");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleRedeploy = async () => {
+    setRedeploying(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/redeploy`, { method: "POST" });
+      if (res.ok) await fetchProject(true);
+    } finally {
+      setRedeploying(false);
     }
   };
 
@@ -166,14 +177,30 @@ export default function ProjectPage() {
       )}
 
       {/* Failure message */}
-      {project.status === "failed" && project.failureReason && (
+      {project.status === "failed" && (
         <div className="card p-4 border-crimson-600/30 bg-crimson-700/10">
-          <div className="flex items-start gap-2">
-            <AlertTriangle size={15} className="text-crimson-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-crimson-400">Deployment failed</p>
-              <p className="text-sm text-crimson-300/80 mt-0.5">{project.failureReason}</p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2 min-w-0">
+              <AlertTriangle size={15} className="text-crimson-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-crimson-400">Deployment failed</p>
+                <p className="text-sm text-crimson-300/80 mt-0.5">
+                  {project.failureReason ?? "The deployment did not complete."}
+                </p>
+              </div>
             </div>
+            <button
+              onClick={handleRedeploy}
+              disabled={redeploying}
+              className="btn-primary text-sm shrink-0"
+            >
+              {redeploying ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {redeploying ? "Redeploying…" : "Redeploy"}
+            </button>
           </div>
         </div>
       )}

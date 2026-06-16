@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import User from "@/lib/models/User";
-import { triggerMasterWorkflow, envVarsToBase64 } from "@/lib/github";
+import { triggerMasterWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/github";
 
 // GET /api/projects - list user's projects
 export async function GET(request: NextRequest) {
@@ -44,11 +44,23 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, repoUrl, pat, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId } = body;
 
-    if (!name || !repoUrl || !pat) {
+    if (!name || !repoUrl) {
       return NextResponse.json(
-        { error: "name, repoUrl, and pat are required" },
+        { error: "name and repoUrl are required" },
         { status: 400 }
       );
+    }
+
+    // A PAT is only needed for private repos. If none was provided, confirm the
+    // repo is publicly cloneable before kicking off a deployment that would fail.
+    if (!pat) {
+      const access = await checkRepoAccess(repoUrl);
+      if (!access.accessible || access.isPrivate) {
+        return NextResponse.json(
+          { error: "This repository is private or not found. A GitHub PAT is required." },
+          { status: 400 }
+        );
+      }
     }
 
     await dbConnect();
@@ -60,7 +72,7 @@ export async function POST(request: NextRequest) {
       userId,
       name: name.trim(),
       repoUrl: repoUrl.trim(),
-      pat,
+      pat: pat || "",
       envVars: envVars ?? [],
       runCommand: runCommand?.trim() || "pnpm dev",
       port: port ?? 3000,
@@ -78,7 +90,7 @@ export async function POST(request: NextRequest) {
         action: "deploy_new",
         projectId: project._id.toString(),
         repoUrl,
-        pat,
+        pat: pat || "",
         envB64,
         runCommand: runCommand?.trim() || "pnpm dev",
         port: port ?? 3000,

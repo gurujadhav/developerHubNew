@@ -60,7 +60,7 @@ const ProjectSchema = new mongoose.Schema<IProject>(
     },
     pat: {
       type: String,
-      required: [true, "GitHub PAT is required"],
+      default: "", // empty for public repos, which clone without a token
     },
     envVars: {
       type: [EnvVarSchema],

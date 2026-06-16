@@ -141,3 +141,50 @@ export function envVarsToBase64(envVars: Array<{ key: string; value: string }>):
   const content = envVars.map(({ key, value }) => `${key}=${value}`).join("\n");
   return Buffer.from(content).toString("base64");
 }
+
+/** Parse owner/repo from a GitHub URL */
+export function parseRepoUrl(repoUrl: string): { owner: string; repo: string } | null {
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (!match) return null;
+  return { owner: match[1], repo: match[2] };
+}
+
+export interface RepoAccess {
+  accessible: boolean;
+  isPrivate: boolean;
+  fullName?: string;
+  error?: string;
+}
+
+/**
+ * Check whether a GitHub repo can be cloned. When `pat` is omitted, the lookup
+ * is unauthenticated — so an `accessible` result means the repo is public and
+ * needs no token. With a `pat`, it confirms the token can reach the repo.
+ */
+export async function checkRepoAccess(repoUrl: string, pat?: string): Promise<RepoAccess> {
+  const parsed = parseRepoUrl(repoUrl);
+  if (!parsed) {
+    return { accessible: false, isPrivate: false, error: "Invalid GitHub repository URL format" };
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (pat) headers.Authorization = `Bearer ${pat}`;
+
+  const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
+    headers,
+  });
+
+  if (!res.ok) {
+    return {
+      accessible: false,
+      isPrivate: true,
+      error: `Cannot access repo "${parsed.owner}/${parsed.repo}" (HTTP ${res.status})`,
+    };
+  }
+
+  const data = await res.json();
+  return { accessible: true, isPrivate: Boolean(data.private), fullName: data.full_name };
+}

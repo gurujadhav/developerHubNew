@@ -1,7 +1,6 @@
 name: "Master Orchestrator"
 
 on:
-  # Triggered by the Vercel app for a new project deployment
   workflow_dispatch:
     inputs:
       action:
@@ -19,8 +18,9 @@ on:
         required: true
         type: string
       pat:
-        description: "GitHub PAT"
-        required: true
+        description: "GitHub PAT (empty for public repos)"
+        required: false
+        default: ""
         type: string
       env_b64:
         description: "Base64-encoded .env content"
@@ -43,22 +43,19 @@ on:
         default: ""
         type: string
 
-  # Runs every 3 hours to rotate workflows and keep tunnels fresh
   schedule:
     - cron: "0 */3 * * *"
 
 env:
   VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
   WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
-  GH_TOKEN: ${{ secrets.GH_PAT_WORKFLOWS }}      # PAT to trigger other workflows in this repo
+  GH_TOKEN: ${{ secrets.GH_PAT_WORKFLOWS }}
   REPO_OWNER: ${{ github.repository_owner }}
   REPO_NAME: ${{ github.event.repository.name }}
   TOTAL_SERVERS: 12
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────────
-  # JOB A: Deploy a new project
-  # ────────────────────────────────────────────────────────────────────────────
+  # ── Deploy a new project ────────────────────────────────────────────────────
   deploy-new:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'deploy_new'
     runs-on: ubuntu-latest
@@ -67,41 +64,28 @@ jobs:
     steps:
       - name: Pick least-loaded server workflow
         id: pick-server
-        env:
-          PROJECT_ID: ${{ inputs.project_id }}
         run: |
-          echo "Fetching active project → workflow assignments from Vercel..."
-          RESPONSE=$(curl -fsSL \
+          RESPONSE=$(curl -sL \
             -H "x-internal-secret: $WEBHOOK_SECRET" \
             "$VERCEL_APP_URL/api/projects" || echo '{"projects":[]}')
 
-          # Count how many projects each server workflow is running
           declare -A SERVER_COUNT
-          for i in $(seq 1 $TOTAL_SERVERS); do
-            SERVER_COUNT[$i]=0
-          done
+          for i in $(seq 1 $TOTAL_SERVERS); do SERVER_COUNT[$i]=0; done
 
-          ACTIVE_WORKFLOWS=$(echo "$RESPONSE" | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          workflows = [str(p.get('activeWorkflow', '')) for p in data.get('projects', []) if p.get('activeWorkflow')]
-          print(' '.join(workflows))
+          ACTIVE=$(echo "$RESPONSE" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          print(' '.join(str(p.get('activeWorkflow','')) for p in d.get('projects',[]) if p.get('activeWorkflow')))
           " 2>/dev/null || true)
 
-          for w in $ACTIVE_WORKFLOWS; do
-            if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -ge 1 ] && [ "$w" -le $TOTAL_SERVERS ]; then
-              SERVER_COUNT[$w]=$((${SERVER_COUNT[$w]} + 1))
-            fi
+          for w in $ACTIVE; do
+            [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -ge 1 ] && [ "$w" -le $TOTAL_SERVERS ] \
+              && SERVER_COUNT[$w]=$((${SERVER_COUNT[$w]}+1))
           done
 
-          # Find server with fewest active projects
-          MIN_LOAD=9999
-          CHOSEN=1
+          MIN=9999; CHOSEN=1
           for i in $(seq 1 $TOTAL_SERVERS); do
-            if [ "${SERVER_COUNT[$i]}" -lt "$MIN_LOAD" ]; then
-              MIN_LOAD="${SERVER_COUNT[$i]}"
-              CHOSEN=$i
-            fi
+            [ "${SERVER_COUNT[$i]}" -lt "$MIN" ] && MIN="${SERVER_COUNT[$i]}" && CHOSEN=$i
           done
 
           echo "Chosen server: $CHOSEN (load: ${SERVER_COUNT[$CHOSEN]})"
@@ -118,39 +102,59 @@ jobs:
           PORT: ${{ inputs.port }}
           CF_KEY: ${{ inputs.cf_workers_key }}
         run: |
-          echo "Triggering server-${SERVER_NUM}.yml for project $PROJECT_ID..."
+          echo "Triggering server-${SERVER_NUM}.yml for project ${PROJECT_ID}..."
 
-          HTTP_STATUS=$(curl -o /tmp/gh_resp.json -w "%{http_code}" -fsSX POST \
+          # Use jq to safely build JSON — handles all special characters correctly
+          jq -n \
+            --arg ref       "main" \
+            --arg pid       "$PROJECT_ID" \
+            --arg repo_url  "$REPO_URL" \
+            --arg pat       "$PAT" \
+            --arg env_b64   "$ENV_B64" \
+            --arg run_cmd   "$RUN_CMD" \
+            --arg port      "$PORT" \
+            --arg wh_url    "${VERCEL_APP_URL}/api/webhook/update-link" \
+            --arg wh_secret "$WEBHOOK_SECRET" \
+            --arg cf_key    "${CF_KEY:-}" \
+            '{
+              ref: $ref,
+              inputs: {
+                project_id:     $pid,
+                repo_url:       $repo_url,
+                pat:            $pat,
+                env_b64:        $env_b64,
+                run_command:    $run_cmd,
+                port:           $port,
+                webhook_url:    $wh_url,
+                webhook_secret: $wh_secret,
+                cf_workers_key: $cf_key
+              }
+            }' > /tmp/payload.json
+
+          echo "Payload built (secrets redacted):"
+          jq 'del(.inputs.pat, .inputs.webhook_secret) | .inputs.env_b64 = "***"' /tmp/payload.json
+
+          HTTP_STATUS=$(curl -s -o /tmp/gh_resp.json -w "%{http_code}" -X POST \
             "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/server-${SERVER_NUM}.yml/dispatches" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"ref\": \"main\",
-              \"inputs\": {
-                \"project_id\": \"$PROJECT_ID\",
-                \"repo_url\": \"$REPO_URL\",
-                \"pat\": \"$PAT\",
-                \"env_b64\": \"$ENV_B64\",
-                \"run_command\": \"$RUN_CMD\",
-                \"port\": \"$PORT\",
-                \"webhook_url\": \"${VERCEL_APP_URL}/api/webhook/update-link\",
-                \"webhook_secret\": \"$WEBHOOK_SECRET\",
-                \"cf_workers_key\": \"$CF_KEY\"
-              }
-            }" || true)
+            --data-binary @/tmp/payload.json)
 
           echo "GitHub API status: $HTTP_STATUS"
-          cat /tmp/gh_resp.json || true
+          echo "GitHub API response:"
+          cat /tmp/gh_resp.json
 
           if [[ "$HTTP_STATUS" != "204" ]]; then
             echo "::error::Failed to trigger server-${SERVER_NUM}.yml (HTTP $HTTP_STATUS)"
-            # Mark project as failed via webhook
-            curl -fsSX POST "${VERCEL_APP_URL}/api/webhook/update-link" \
+            curl -s -X POST "${VERCEL_APP_URL}/api/webhook/update-link" \
               -H "Content-Type: application/json" \
               -H "x-webhook-secret: $WEBHOOK_SECRET" \
-              -d "{\"project_id\":\"$PROJECT_ID\",\"status\":\"failed\",\"failure_reason\":\"Master workflow could not trigger server-${SERVER_NUM}\"}" || true
+              --data-binary "$(jq -n \
+                --arg pid "$PROJECT_ID" \
+                --arg reason "Could not trigger server-${SERVER_NUM} (HTTP $HTTP_STATUS)" \
+                '{project_id:$pid, status:"failed", failure_reason:$reason}')" || true
             exit 1
           fi
 
@@ -160,35 +164,26 @@ jobs:
         env:
           PROJECT_ID: ${{ inputs.project_id }}
         run: |
-          echo "Polling Vercel API for project to reach 'running' state..."
+          echo "Polling for project to reach 'running'..."
           for i in $(seq 1 60); do
             sleep 10
-            STATUS=$(curl -fsSL \
+            STATUS=$(curl -sL \
               -H "x-internal-secret: $WEBHOOK_SECRET" \
-              "${VERCEL_APP_URL}/api/projects" 2>/dev/null \
+              "${VERCEL_APP_URL}/api/projects" \
               | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          proj = next((p for p in data.get('projects', []) if str(p.get('_id','')) == '$PROJECT_ID'), None)
-          print(proj.get('status', 'unknown') if proj else 'not_found')
+          import json,sys
+          d=json.load(sys.stdin)
+          p=next((x for x in d.get('projects',[]) if str(x.get('_id',''))=='$PROJECT_ID'),None)
+          print(p.get('status','unknown') if p else 'not_found')
           " 2>/dev/null || echo "error")
 
             echo "Poll $i/60 — status: $STATUS"
-
-            if [ "$STATUS" = "running" ]; then
-              echo "Project is running!"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              echo "::error::Project deployment failed"
-              exit 1
-            fi
+            [ "$STATUS" = "running" ] && echo "Project is running!" && exit 0
+            [ "$STATUS" = "failed"  ] && echo "::error::Project failed" && exit 1
           done
+          echo "::warning::Timed out — server workflow may still be starting"
 
-          echo "::warning::Timed out waiting for project to reach running state (server workflow may still be starting)"
-
-  # ────────────────────────────────────────────────────────────────────────────
-  # JOB B: Cron maintenance — rotate all running projects to fresh workflows
-  # ────────────────────────────────────────────────────────────────────────────
+  # ── Cron maintenance ────────────────────────────────────────────────────────
   cron-maintenance:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -196,180 +191,143 @@ jobs:
 
     steps:
       - name: Fetch all running projects
-        id: fetch-projects
+        id: fetch
         run: |
-          echo "Fetching active projects from Vercel..."
-          RESPONSE=$(curl -fsSL \
+          RESPONSE=$(curl -sL \
             -H "x-internal-secret: $WEBHOOK_SECRET" \
             "${VERCEL_APP_URL}/api/projects" || echo '{"projects":[]}')
-
           echo "$RESPONSE" > /tmp/projects.json
-
           COUNT=$(python3 -c "
           import json
-          with open('/tmp/projects.json') as f:
-            data = json.load(f)
-          print(len([p for p in data.get('projects', []) if p.get('status') in ('running', 'deploying')]))
+          with open('/tmp/projects.json') as f: d=json.load(f)
+          print(len([p for p in d.get('projects',[]) if p.get('status') in ('running','deploying')]))
           " 2>/dev/null || echo 0)
-
           echo "Active projects: $COUNT"
-          echo "project_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      - name: Rotate each project to a new server workflow
-        if: steps.fetch-projects.outputs.project_count != '0'
+      - name: Rotate projects to fresh server workflows
+        if: steps.fetch.outputs.count != '0'
         run: |
           python3 << 'PYEOF'
-          import json, subprocess, random, time, os
+          import json, subprocess, random, time, os, base64
 
-          VERCEL_URL = os.environ["VERCEL_APP_URL"]
-          WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
-          GH_TOKEN = os.environ["GH_TOKEN"]
-          REPO_OWNER = os.environ["REPO_OWNER"]
-          REPO_NAME = os.environ["REPO_NAME"]
-          TOTAL_SERVERS = int(os.environ["TOTAL_SERVERS"])
+          VERCEL  = os.environ["VERCEL_APP_URL"]
+          SECRET  = os.environ["WEBHOOK_SECRET"]
+          TOKEN   = os.environ["GH_TOKEN"]
+          OWNER   = os.environ["REPO_OWNER"]
+          REPO    = os.environ["REPO_NAME"]
+          SERVERS = int(os.environ["TOTAL_SERVERS"])
 
           with open("/tmp/projects.json") as f:
-              data = json.load(f)
+              projects = [p for p in json.load(f).get("projects", [])
+                          if p.get("status") in ("running", "deploying")]
 
-          projects = [p for p in data.get("projects", []) if p.get("status") in ("running", "deploying")]
-          print(f"Processing {len(projects)} projects")
+          print(f"Rotating {len(projects)} projects")
 
-          for project in projects:
-              project_id = str(project["_id"])
-              current_workflow = project.get("activeWorkflow")
-              current_run_id = project.get("activeWorkflowRunId")
+          for proj in projects:
+              pid        = str(proj["_id"])
+              cur_wf     = proj.get("activeWorkflow")
+              cur_run_id = proj.get("activeWorkflowRunId")
 
-              # Pick a different random server
-              available = [n for n in range(1, TOTAL_SERVERS + 1) if n != current_workflow]
-              if not available:
-                  available = list(range(1, TOTAL_SERVERS + 1))
-              new_server = random.choice(available)
-
-              print(f"\nProject {project_id}: server {current_workflow} → server {new_server}")
-
-              # We need the PAT and env to re-trigger — fetch full project via a separate call
-              # (This endpoint requires proper auth; use the internal secret)
-              proj_resp = subprocess.run(
-                  ["curl", "-fsSL",
-                   "-H", f"x-internal-secret: {WEBHOOK_SECRET}",
-                   f"{VERCEL_URL}/api/projects/{project_id}/internal"],
-                  capture_output=True, text=True
-              )
-              # If we can't fetch full details, skip rotation (PAT is needed)
-              if proj_resp.returncode != 0:
-                  print(f"  Could not fetch full project data — skipping rotation")
-                  continue
-
+              r = subprocess.run(
+                  ["curl", "-sL", "-H", f"x-internal-secret: {SECRET}",
+                   f"{VERCEL}/api/projects/{pid}/internal"],
+                  capture_output=True, text=True)
               try:
-                  proj_data = json.loads(proj_resp.stdout).get("project", {})
+                  full = json.loads(r.stdout).get("project", {})
               except Exception:
-                  print(f"  Invalid response — skipping rotation")
+                  print(f"  {pid}: could not fetch full data, skipping")
                   continue
 
-              pat = proj_data.get("pat", "")
-              repo_url = proj_data.get("repoUrl", "")
-              run_command = proj_data.get("runCommand", "pnpm dev")
-              port = str(proj_data.get("port", 3000))
-              cf_key = proj_data.get("cfWorkersKey", "")
-              env_vars = proj_data.get("envVars", [])
-
-              if not pat or not repo_url:
-                  print(f"  Missing PAT or repoUrl — skipping")
+              pat      = full.get("pat", "")
+              repo_url = full.get("repoUrl", "")
+              # PAT may be empty for public repos — only repo_url is required.
+              if not repo_url:
+                  print(f"  {pid}: missing repoUrl, skipping")
                   continue
 
-              # Build base64 env content
-              env_content = "\n".join(f"{v['key']}={v['value']}" for v in env_vars if v.get("key"))
-              import base64
-              env_b64 = base64.b64encode(env_content.encode()).decode()
+              run_cmd  = full.get("runCommand", "pnpm dev")
+              port     = str(full.get("port", 3000))
+              cf_key   = full.get("cfWorkersKey", "") or ""
+              env_vars = full.get("envVars", [])
+              env_b64  = base64.b64encode(
+                  "\n".join(f"{v['key']}={v['value']}" for v in env_vars if v.get("key")).encode()
+              ).decode()
 
-              # Trigger new server workflow
-              trigger_payload = json.dumps({
+              available = [n for n in range(1, SERVERS+1) if n != cur_wf] or list(range(1, SERVERS+1))
+              new_wf = random.choice(available)
+              print(f"  {pid}: server {cur_wf} → server {new_wf}")
+
+              payload = json.dumps({
                   "ref": "main",
                   "inputs": {
-                      "project_id": project_id,
-                      "repo_url": repo_url,
-                      "pat": pat,
-                      "env_b64": env_b64,
-                      "run_command": run_command,
-                      "port": port,
-                      "webhook_url": f"{VERCEL_URL}/api/webhook/update-link",
-                      "webhook_secret": WEBHOOK_SECRET,
-                      "cf_workers_key": cf_key or "",
+                      "project_id":     pid,
+                      "repo_url":       repo_url,
+                      "pat":            pat,
+                      "env_b64":        env_b64,
+                      "run_command":    run_cmd,
+                      "port":           port,
+                      "webhook_url":    f"{VERCEL}/api/webhook/update-link",
+                      "webhook_secret": SECRET,
+                      "cf_workers_key": cf_key,
                   }
               })
 
-              trigger_resp = subprocess.run(
-                  ["curl", "-o", "/dev/null", "-w", "%{http_code}",
-                   "-fsSX", "POST",
-                   f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/workflows/server-{new_server}.yml/dispatches",
-                   "-H", f"Authorization: Bearer {GH_TOKEN}",
+              with open("/tmp/cron_payload.json", "w") as f:
+                  f.write(payload)
+
+              r2 = subprocess.run(
+                  ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
+                   f"https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/server-{new_wf}.yml/dispatches",
+                   "-H", f"Authorization: Bearer {TOKEN}",
                    "-H", "Accept: application/vnd.github+json",
                    "-H", "X-GitHub-Api-Version: 2022-11-28",
                    "-H", "Content-Type: application/json",
-                   "-d", trigger_payload],
-                  capture_output=True, text=True
-              )
+                   "--data-binary", "@/tmp/cron_payload.json"],
+                  capture_output=True, text=True)
+              print(f"  Triggered server-{new_wf}: HTTP {r2.stdout.strip()}")
 
-              http_status = trigger_resp.stdout.strip()
-              print(f"  Triggered server-{new_server}: HTTP {http_status}")
-
-              if http_status != "204":
-                  print(f"  Failed to trigger server-{new_server} — skipping cancellation")
+              if r2.stdout.strip() != "204":
+                  print(f"  Failed — keeping old workflow")
                   continue
 
-              # Wait for new workflow to start and check in
-              print(f"  Waiting 3 minutes for server-{new_server} to come up...")
+              print(f"  Waiting 3 min for server-{new_wf} to start...")
               time.sleep(180)
 
-              # Check if the project is now running on the new workflow
-              check_resp = subprocess.run(
-                  ["curl", "-fsSL",
-                   "-H", f"x-internal-secret: {WEBHOOK_SECRET}",
-                   f"{VERCEL_URL}/api/projects"],
-                  capture_output=True, text=True
-              )
-
+              r3 = subprocess.run(
+                  ["curl", "-sL", "-H", f"x-internal-secret: {SECRET}", f"{VERCEL}/api/projects"],
+                  capture_output=True, text=True)
               try:
-                  check_data = json.loads(check_resp.stdout)
-                  updated_project = next(
-                      (p for p in check_data.get("projects", []) if str(p["_id"]) == project_id),
-                      None
-                  )
-                  new_status = updated_project.get("status") if updated_project else "unknown"
-                  new_workflow = updated_project.get("activeWorkflow") if updated_project else None
+                  updated = next((p for p in json.loads(r3.stdout).get("projects", [])
+                                  if str(p["_id"]) == pid), None)
+                  new_status = updated.get("status") if updated else "unknown"
+                  new_active = updated.get("activeWorkflow") if updated else None
               except Exception:
-                  new_status = "unknown"
-                  new_workflow = None
+                  new_status, new_active = "unknown", None
 
-              print(f"  New status: {new_status}, workflow: {new_workflow}")
+              print(f"  Status: {new_status}, active workflow: {new_active}")
 
-              if new_status == "running" and new_workflow == new_server:
-                  # Cancel old workflow run
-                  if current_run_id:
-                      cancel_resp = subprocess.run(
-                          ["curl", "-o", "/dev/null", "-w", "%{http_code}",
-                           "-fsSX", "POST",
-                           f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/runs/{current_run_id}/cancel",
-                           "-H", f"Authorization: Bearer {GH_TOKEN}",
+              if new_status == "running" and new_active == new_wf:
+                  if cur_run_id:
+                      r4 = subprocess.run(
+                          ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
+                           f"https://api.github.com/repos/{OWNER}/{REPO}/actions/runs/{cur_run_id}/cancel",
+                           "-H", f"Authorization: Bearer {TOKEN}",
                            "-H", "Accept: application/vnd.github+json",
                            "-H", "X-GitHub-Api-Version: 2022-11-28"],
-                          capture_output=True, text=True
-                      )
-                      print(f"  Cancelled run {current_run_id}: HTTP {cancel_resp.stdout.strip()}")
-                  else:
-                      print(f"  No run ID to cancel for old workflow")
+                          capture_output=True, text=True)
+                      print(f"  Cancelled old run {cur_run_id}: HTTP {r4.stdout.strip()}")
               else:
-                  print(f"  New workflow didn't come up cleanly — leaving old workflow running")
+                  print(f"  New workflow not confirmed — keeping old one running")
 
-              # Brief pause between projects to avoid GitHub API rate limits
               time.sleep(5)
 
-          print("\nCron maintenance complete")
+          print("Cron maintenance done")
           PYEOF
 
       - name: Summary
         if: always()
         run: |
-          echo "## Cron Maintenance Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "Ran at: $(date -u)" >> "$GITHUB_STEP_SUMMARY"
-          echo "Project count: ${{ steps.fetch-projects.outputs.project_count }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Cron Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Ran at: $(date -u)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Projects: ${{ steps.fetch.outputs.count }}" >> "$GITHUB_STEP_SUMMARY"

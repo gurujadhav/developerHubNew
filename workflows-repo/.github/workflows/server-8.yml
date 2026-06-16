@@ -12,8 +12,9 @@ on:
         required: true
         type: string
       pat:
-        description: "GitHub PAT with repo read access"
-        required: true
+        description: "GitHub PAT with repo read access (empty for public repos)"
+        required: false
+        default: ""
         type: string
       env_b64:
         description: "Base64-encoded .env file content"
@@ -79,9 +80,13 @@ jobs:
           PAT: ${{ inputs.pat }}
           REPO_URL: ${{ inputs.repo_url }}
         run: |
-          # Strip scheme and embed PAT
+          # Strip scheme and embed PAT when provided (public repos clone without one)
           REPO_CLEAN=$(echo "$REPO_URL" | sed 's|https://||')
-          git clone --depth 1 "https://${PAT}@${REPO_CLEAN}" project
+          if [ -n "$PAT" ]; then
+            git clone --depth 1 "https://${PAT}@${REPO_CLEAN}" project
+          else
+            git clone --depth 1 "https://${REPO_CLEAN}" project
+          fi
           echo "Cloned $REPO_URL"
 
       # ── 5. Restore node_modules cache ────────────────────────────────────────
