@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ["mongoose"],
-  },
+  // In Next.js 15, serverComponentsExternalPackages moved to top-level serverExternalPackages
+  serverExternalPackages: ["mongoose", "bcryptjs"],
 };
 
 module.exports = nextConfig;
