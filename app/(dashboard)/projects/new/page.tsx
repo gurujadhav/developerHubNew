@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -12,11 +12,13 @@ import {
   Plus,
   Terminal,
   Trash2,
+  Upload,
   X,
   Key,
   Cloud,
   Zap,
 } from "lucide-react";
+import { parseEnvFile } from "@/lib/envParse";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -50,6 +52,7 @@ export default function NewProjectPage() {
   const [step, setStep] = useState<Step>(1);
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState("");
+  const envFileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<FormData>({
     name: "",
@@ -103,6 +106,22 @@ export default function NewProjectPage() {
       ...f,
       envVars: [...f.envVars, { key: "", value: "", id: Math.random().toString(36).slice(2) }],
     }));
+  };
+
+  const importEnvFile = async (file: File) => {
+    const text = await file.text();
+    const parsed = parseEnvFile(text);
+    if (parsed.length === 0) return;
+    setForm((f) => {
+      const byKey = new Map(f.envVars.map((v) => [v.key, v]));
+      for (const { key, value } of parsed) {
+        const existing = byKey.get(key);
+        if (existing) existing.value = value;
+        else
+          byKey.set(key, { key, value, id: Math.random().toString(36).slice(2) });
+      }
+      return { ...f, envVars: Array.from(byKey.values()) };
+    });
   };
 
   const updateEnvVar = (id: string, field: "key" | "value", value: string) => {
@@ -386,10 +405,31 @@ export default function NewProjectPage() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="input-label mb-0">Environment variables</label>
-                <button type="button" onClick={addEnvVar} className="btn-ghost text-xs py-1 px-2">
-                  <Plus size={12} />
-                  Add
-                </button>
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={envFileRef}
+                    type="file"
+                    accept=".env,.txt,text/plain"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) importEnvFile(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => envFileRef.current?.click()}
+                    className="btn-ghost text-xs py-1 px-2"
+                  >
+                    <Upload size={12} />
+                    Upload .env
+                  </button>
+                  <button type="button" onClick={addEnvVar} className="btn-ghost text-xs py-1 px-2">
+                    <Plus size={12} />
+                    Add
+                  </button>
+                </div>
               </div>
 
               {form.envVars.length === 0 ? (

@@ -38,7 +38,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
   await project.save();
 
-  return NextResponse.json({ project });
+  // Never return the stored PAT to the client.
+  const safe = project.toObject();
+  delete (safe as any).pat;
+  return NextResponse.json({ project: safe });
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {

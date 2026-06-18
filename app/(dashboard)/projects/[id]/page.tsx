@@ -1,22 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  Activity,
   AlertTriangle,
   ArrowLeft,
   Clock,
   ExternalLink,
   GitBranch,
   Loader2,
+  Pencil,
+  Plus,
   RefreshCw,
-  Terminal,
+  Save,
   Trash2,
+  Upload,
   Workflow,
+  X,
   Zap,
 } from "lucide-react";
+import { parseEnvFile } from "@/lib/envParse";
 
 interface Project {
   _id: string;
@@ -35,6 +39,21 @@ interface Project {
   createdAt: string;
   updatedAt: string;
 }
+
+interface EnvRow {
+  key: string;
+  value: string;
+  id: string;
+}
+
+interface EditForm {
+  name: string;
+  runCommand: string;
+  port: string;
+  envVars: EnvRow[];
+}
+
+const rowId = () => Math.random().toString(36).slice(2);
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -77,6 +96,13 @@ export default function ProjectPage() {
   const [redeploying, setRedeploying] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [form, setForm] = useState<EditForm | null>(null);
+  const envFileRef = useRef<HTMLInputElement>(null);
+
   const fetchProject = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -118,6 +144,88 @@ export default function ProjectPage() {
     }
   };
 
+  // ── Edit handlers ──────────────────────────────────────────────────────────
+  const startEdit = () => {
+    if (!project) return;
+    setSaveError("");
+    setForm({
+      name: project.name,
+      runCommand: project.runCommand,
+      port: String(project.port),
+      envVars: project.envVars.map((v) => ({ ...v, id: rowId() })),
+    });
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setForm(null);
+  };
+
+  const addEnvVar = () =>
+    setForm((f) =>
+      f ? { ...f, envVars: [...f.envVars, { key: "", value: "", id: rowId() }] } : f
+    );
+
+  const updateEnvVar = (rid: string, field: "key" | "value", value: string) =>
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            envVars: f.envVars.map((v) => (v.id === rid ? { ...v, [field]: value } : v)),
+          }
+        : f
+    );
+
+  const removeEnvVar = (rid: string) =>
+    setForm((f) => (f ? { ...f, envVars: f.envVars.filter((v) => v.id !== rid) } : f));
+
+  const importEnvFile = async (file: File) => {
+    const text = await file.text();
+    const parsed = parseEnvFile(text);
+    if (parsed.length === 0) return;
+    setForm((f) => {
+      if (!f) return f;
+      const byKey = new Map(f.envVars.map((v) => [v.key, v]));
+      for (const { key, value } of parsed) {
+        const existing = byKey.get(key);
+        if (existing) existing.value = value;
+        else byKey.set(key, { key, value, id: rowId() });
+      }
+      return { ...f, envVars: Array.from(byKey.values()) };
+    });
+  };
+
+  const handleSave = async () => {
+    if (!form) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          runCommand: form.runCommand.trim() || "pnpm dev",
+          port: Number(form.port) || 3000,
+          envVars: form.envVars
+            .filter((v) => v.key.trim())
+            .map(({ key, value }) => ({ key: key.trim(), value })),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSaveError(data.error || "Failed to save changes");
+        return;
+      }
+      await fetchProject(true);
+      setEditing(false);
+      setForm(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading || !project) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -125,6 +233,8 @@ export default function ProjectPage() {
       </div>
     );
   }
+
+  const canRedeploy = project.status !== "deploying";
 
   return (
     <div className="max-w-3xl space-y-6 animate-fade-in">
@@ -144,13 +254,36 @@ export default function ProjectPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => fetchProject(true)}
-          className="btn-ghost p-2 shrink-0"
-          title="Refresh"
-        >
-          <RefreshCw size={15} />
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {!editing && canRedeploy && (
+            <button
+              onClick={handleRedeploy}
+              disabled={redeploying}
+              className="btn-secondary text-sm"
+              title="Pull the latest code and redeploy"
+            >
+              {redeploying ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {redeploying ? "Redeploying…" : "Redeploy"}
+            </button>
+          )}
+          {!editing && (
+            <button onClick={startEdit} className="btn-ghost text-sm" title="Edit configuration">
+              <Pencil size={14} />
+              Edit
+            </button>
+          )}
+          <button
+            onClick={() => fetchProject(true)}
+            className="btn-ghost p-2"
+            title="Refresh status"
+          >
+            <RefreshCw size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Output link */}
@@ -177,7 +310,7 @@ export default function ProjectPage() {
       )}
 
       {/* Failure message */}
-      {project.status === "failed" && (
+      {project.status === "failed" && !editing && (
         <div className="card p-4 border-crimson-600/30 bg-crimson-700/10">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-2 min-w-0">
@@ -220,64 +353,194 @@ export default function ProjectPage() {
         </div>
       )}
 
-      {/* Project details */}
-      <div className="grid sm:grid-cols-2 gap-4">
-        {/* Config */}
-        <div className="card p-5">
-          <h3 className="section-title mb-3">Configuration</h3>
-          <div>
-            <InfoRow label="Run command">
-              <code className="font-mono text-gold-400 text-xs">{project.runCommand}</code>
-            </InfoRow>
-            <InfoRow label="Port">
-              <code className="font-mono">{project.port}</code>
-            </InfoRow>
-            <InfoRow label="Env variables">
-              {project.envVars.length > 0
-                ? `${project.envVars.length} variable${project.envVars.length !== 1 ? "s" : ""}`
-                : "None"}
-            </InfoRow>
-            <InfoRow label="CF subdomain">
-              {project.cfSubdomain ?? (
-                <span className="text-slate-600">Quick-tunnel (auto)</span>
-              )}
-            </InfoRow>
+      {editing && form ? (
+        /* ── Edit form ──────────────────────────────────────────────────────── */
+        <div className="card p-5 space-y-5 animate-slide-up">
+          <div className="flex items-center justify-between">
+            <h3 className="section-title mb-0">Edit configuration</h3>
+            <button onClick={cancelEdit} className="btn-ghost p-1.5" title="Cancel">
+              <X size={16} />
+            </button>
           </div>
-        </div>
 
-        {/* Runtime */}
-        <div className="card p-5">
-          <h3 className="section-title mb-3">Runtime</h3>
           <div>
-            <InfoRow label="Active server">
-              {project.activeWorkflow ? (
-                <span className="flex items-center gap-1.5 justify-end">
-                  <Workflow size={12} className="text-gold-500" />
-                  Server {project.activeWorkflow}
-                </span>
-              ) : (
-                <span className="text-slate-600">—</span>
-              )}
-            </InfoRow>
-            <InfoRow label="Deployed at">
-              {project.deployedAt ? (
-                <span className="flex items-center gap-1.5 justify-end">
-                  <Clock size={12} className="text-slate-500" />
-                  {new Date(project.deployedAt).toLocaleString()}
-                </span>
-              ) : (
-                <span className="text-slate-600">—</span>
-              )}
-            </InfoRow>
-            <InfoRow label="Created">
-              {new Date(project.createdAt).toLocaleDateString()}
-            </InfoRow>
-            <InfoRow label="Last updated">
-              {new Date(project.updatedAt).toLocaleString()}
-            </InfoRow>
+            <label className="input-label">Project name</label>
+            <input
+              className="input"
+              value={form.name}
+              maxLength={60}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="input-label">Run command</label>
+              <input
+                className="input font-mono"
+                value={form.runCommand}
+                onChange={(e) => setForm({ ...form, runCommand: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="input-label">Port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                className="input font-mono"
+                value={form.port}
+                onChange={(e) => setForm({ ...form, port: e.target.value })}
+              />
+            </div>
+          </div>
+
+          {/* Env vars */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="input-label mb-0">Environment variables</label>
+              <div className="flex items-center gap-1">
+                <input
+                  ref={envFileRef}
+                  type="file"
+                  accept=".env,.txt,text/plain"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) importEnvFile(file);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => envFileRef.current?.click()}
+                  className="btn-ghost text-xs py-1 px-2"
+                >
+                  <Upload size={12} />
+                  Upload .env
+                </button>
+                <button type="button" onClick={addEnvVar} className="btn-ghost text-xs py-1 px-2">
+                  <Plus size={12} />
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {form.envVars.length === 0 ? (
+              <div
+                onClick={addEnvVar}
+                className="border border-dashed border-navy-600 rounded-lg p-4 text-center text-slate-600 text-sm cursor-pointer hover:border-gold-500/30 hover:text-slate-500 transition-colors"
+              >
+                Add variables manually or upload a .env file
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {form.envVars.map((env) => (
+                  <div key={env.id} className="flex gap-2">
+                    <input
+                      className="input flex-1 text-xs font-mono"
+                      placeholder="KEY"
+                      value={env.key}
+                      onChange={(e) => updateEnvVar(env.id, "key", e.target.value)}
+                    />
+                    <input
+                      className="input flex-[2] text-xs font-mono"
+                      placeholder="value"
+                      value={env.value}
+                      onChange={(e) => updateEnvVar(env.id, "value", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeEnvVar(env.id)}
+                      className="btn-ghost p-2 text-slate-600 hover:text-crimson-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-500">
+            Saving stores your changes. Click <strong className="text-slate-300">Redeploy</strong>{" "}
+            afterwards to apply them to the running app and pull the latest code.
+          </p>
+
+          {saveError && (
+            <div className="px-4 py-3 rounded-lg bg-crimson-700/20 border border-crimson-600/40 text-crimson-400 text-sm">
+              {saveError}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button onClick={handleSave} disabled={saving} className="btn-primary text-sm">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+            <button onClick={cancelEdit} disabled={saving} className="btn-ghost text-sm">
+              Cancel
+            </button>
           </div>
         </div>
-      </div>
+      ) : (
+        /* ── View mode ──────────────────────────────────────────────────────── */
+        <div className="grid sm:grid-cols-2 gap-4">
+          {/* Config */}
+          <div className="card p-5">
+            <h3 className="section-title mb-3">Configuration</h3>
+            <div>
+              <InfoRow label="Run command">
+                <code className="font-mono text-gold-400 text-xs">{project.runCommand}</code>
+              </InfoRow>
+              <InfoRow label="Port">
+                <code className="font-mono">{project.port}</code>
+              </InfoRow>
+              <InfoRow label="Env variables">
+                {project.envVars.length > 0
+                  ? `${project.envVars.length} variable${project.envVars.length !== 1 ? "s" : ""}`
+                  : "None"}
+              </InfoRow>
+              <InfoRow label="CF subdomain">
+                {project.cfSubdomain ?? <span className="text-slate-600">Quick-tunnel (auto)</span>}
+              </InfoRow>
+            </div>
+          </div>
+
+          {/* Runtime */}
+          <div className="card p-5">
+            <h3 className="section-title mb-3">Runtime</h3>
+            <div>
+              <InfoRow label="Active server">
+                {project.activeWorkflow ? (
+                  <span className="flex items-center gap-1.5 justify-end">
+                    <Workflow size={12} className="text-gold-500" />
+                    Server {project.activeWorkflow}
+                  </span>
+                ) : (
+                  <span className="text-slate-600">—</span>
+                )}
+              </InfoRow>
+              <InfoRow label="Deployed at">
+                {project.deployedAt ? (
+                  <span className="flex items-center gap-1.5 justify-end">
+                    <Clock size={12} className="text-slate-500" />
+                    {new Date(project.deployedAt).toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="text-slate-600">—</span>
+                )}
+              </InfoRow>
+              <InfoRow label="Created">
+                {new Date(project.createdAt).toLocaleDateString()}
+              </InfoRow>
+              <InfoRow label="Last updated">
+                {new Date(project.updatedAt).toLocaleString()}
+              </InfoRow>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Links */}
       <div className="card p-5">
@@ -303,14 +566,9 @@ export default function ProjectPage() {
 
       {/* Danger zone */}
       <div className="card p-5 border-crimson-700/20">
-        <h3 className="font-display font-semibold text-base text-crimson-400 mb-3">
-          Danger zone
-        </h3>
+        <h3 className="font-display font-semibold text-base text-crimson-400 mb-3">Danger zone</h3>
         {!showDeleteConfirm ? (
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="btn-danger text-sm"
-          >
+          <button onClick={() => setShowDeleteConfirm(true)} className="btn-danger text-sm">
             <Trash2 size={14} />
             Delete project
           </button>
@@ -320,18 +578,11 @@ export default function ProjectPage() {
               This will stop the running server workflow and permanently delete all project data. This cannot be undone.
             </p>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="btn-danger text-sm"
-              >
+              <button onClick={handleDelete} disabled={deleting} className="btn-danger text-sm">
                 {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 {deleting ? "Deleting…" : "Yes, delete project"}
               </button>
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="btn-ghost text-sm"
-              >
+              <button onClick={() => setShowDeleteConfirm(false)} className="btn-ghost text-sm">
                 Cancel
               </button>
             </div>
