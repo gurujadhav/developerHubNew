@@ -5,6 +5,7 @@ import Project from "@/lib/models/Project";
 import { cancelWorkflowRun } from "@/lib/github";
 import { normalizePorts } from "@/lib/ports";
 import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
+import { normalizeAfterScript, composeAfterScript } from "@/lib/afterScript";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -53,6 +54,18 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     project.runCommands = runCommands;
     project.runMode = runMode;
     project.runCommand = composeRunCommand(runCommands, runMode);
+  }
+
+  // After-scripts: recompose the stored script string per phase.
+  if ("afterStart" in body) {
+    const afterStart = normalizeAfterScript(body.afterStart);
+    project.afterStart = afterStart;
+    project.afterStartScript = composeAfterScript(afterStart);
+  }
+  if ("afterStop" in body) {
+    const afterStop = normalizeAfterScript(body.afterStop);
+    project.afterStop = afterStop;
+    project.afterStopScript = composeAfterScript(afterStop);
   }
 
   await project.save();

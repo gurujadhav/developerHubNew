@@ -5,6 +5,7 @@ import User from "@/lib/models/User";
 import { triggerDeployWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/github";
 import { normalizePorts } from "@/lib/ports";
 import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
+import { normalizeAfterScript, composeAfterScript } from "@/lib/afterScript";
 
 // GET /api/projects - list user's projects
 export async function GET(request: NextRequest) {
@@ -58,6 +59,12 @@ export async function POST(request: NextRequest) {
     const runMode = normalizeRunMode(body.runMode);
     const composedCommand = composeRunCommand(runCommands, runMode);
 
+    // After-scripts (post-start + teardown), each: inline commands + optional repo file.
+    const afterStart = normalizeAfterScript(body.afterStart);
+    const afterStop = normalizeAfterScript(body.afterStop);
+    const afterStartScript = composeAfterScript(afterStart);
+    const afterStopScript = composeAfterScript(afterStop);
+
     if (!name || !repoUrl) {
       return NextResponse.json(
         { error: "name and repoUrl are required" },
@@ -91,6 +98,10 @@ export async function POST(request: NextRequest) {
       runCommand: composedCommand,
       runCommands,
       runMode,
+      afterStart,
+      afterStartScript,
+      afterStop,
+      afterStopScript,
       port: ports[0],
       ports,
       cfWorkersKey: cfWorkersKey || null,
@@ -111,6 +122,8 @@ export async function POST(request: NextRequest) {
         runCommand: composedCommand,
         ports,
         cfWorkersKey: effectiveCfKey,
+        afterStart: afterStartScript,
+        afterStop: afterStopScript,
       });
     } catch (ghError) {
       console.error("Failed to trigger GitHub workflow:", ghError);

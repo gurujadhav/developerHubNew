@@ -19,6 +19,10 @@ import {
   Zap,
 } from "lucide-react";
 import { parseEnvFile } from "@/lib/envParse";
+import AfterScriptEditor, {
+  AfterScriptValue,
+  emptyAfterScript,
+} from "@/components/AfterScriptEditor";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -40,6 +44,8 @@ interface FormData {
   envVars: EnvVar[];
   cfWorkersKey: string;
   cfKvNamespaceId: string;
+  afterStart: AfterScriptValue;
+  afterStop: AfterScriptValue;
 }
 
 const MAX_LIST = 5;
@@ -69,6 +75,8 @@ export default function NewProjectPage() {
     envVars: [],
     cfWorkersKey: "",
     cfKvNamespaceId: "",
+    afterStart: emptyAfterScript(),
+    afterStop: emptyAfterScript(),
   });
 
   // Repo / PAT verification state
@@ -188,6 +196,8 @@ export default function NewProjectPage() {
             .map(({ key, value }) => ({ key: key.trim(), value })),
           cfWorkersKey: form.cfWorkersKey || undefined,
           cfKvNamespaceId: form.cfKvNamespaceId || undefined,
+          afterStart: form.afterStart,
+          afterStop: form.afterStop,
         }),
       });
       const data = await res.json();
@@ -606,6 +616,28 @@ export default function NewProjectPage() {
                 </p>
               </div>
             )}
+
+            <div className="divider" />
+
+            {/* After-scripts */}
+            <div className="space-y-3">
+              <label className="input-label mb-0">
+                After-scripts{" "}
+                <span className="text-slate-600 font-normal normal-case">(optional)</span>
+              </label>
+              <AfterScriptEditor
+                label="After app starts"
+                hint="Runs once after the app is healthy — e.g. migrations, seeding, cache warm-up. Must be one-shot (non-blocking)."
+                value={form.afterStart}
+                onChange={(v) => setForm((f) => ({ ...f, afterStart: v }))}
+              />
+              <AfterScriptEditor
+                label="On teardown (stop / fail / rotate)"
+                hint="Runs when the server stops, fails, or rotates — e.g. cleanup or notifications. Best-effort."
+                value={form.afterStop}
+                onChange={(v) => setForm((f) => ({ ...f, afterStop: v }))}
+              />
+            </div>
           </div>
         )}
 

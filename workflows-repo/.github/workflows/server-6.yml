@@ -44,6 +44,11 @@ on:
         required: false
         default: ""
         type: string
+      after_b64:
+        description: "Base64 JSON {start, stop} of after-scripts"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   serve:
@@ -123,6 +128,23 @@ jobs:
             pnpm install
           fi
 
+      # --- 7b. Decode after-scripts ---
+      - name: Decode after-scripts
+        env:
+          AFTER_B64: ${{ inputs.after_b64 }}
+        run: |
+          AFTER_JSON='{}'
+          if [ -n "$AFTER_B64" ]; then
+            AFTER_JSON=$(echo "$AFTER_B64" | base64 -d 2>/dev/null || echo '{}')
+          fi
+          {
+            echo "AFTER_START<<__AS_EOF__"
+            echo "$AFTER_JSON" | jq -r '.start // ""'
+            echo "__AS_EOF__"
+            echo "AFTER_STOP<<__AS_EOF__"
+            echo "$AFTER_JSON" | jq -r '.stop // ""'
+            echo "__AS_EOF__"
+          } >> "$GITHUB_ENV"
       # --- 8. Start the application ---
       - name: Start application
         working-directory: project
@@ -157,6 +179,13 @@ jobs:
             exit 1
           fi
 
+      # --- 8b. After-start script (runs once after the app is healthy) ---
+      - name: Run after-start script
+        if: env.AFTER_START != ''
+        working-directory: project
+        run: |
+          echo "Running after-start script..."
+          sh -c "$AFTER_START"
       # --- 9. Start Cloudflare tunnels (one per port) ---
       - name: Start Cloudflare quick tunnels
         run: |
@@ -310,6 +339,13 @@ jobs:
             fi
           done
 
+      # --- 12b. After-stop script (teardown, best-effort) ---
+      - name: Run after-stop script
+        if: always() && env.AFTER_STOP != ''
+        working-directory: project
+        run: |
+          echo "Running after-stop script..."
+          sh -c "$AFTER_STOP" || true
       # --- 13. Notify Vercel app - stopped (always runs) ---
       - name: Notify webhook - stopped
         if: always()

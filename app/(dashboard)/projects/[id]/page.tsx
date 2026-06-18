@@ -21,6 +21,10 @@ import {
   Zap,
 } from "lucide-react";
 import { parseEnvFile } from "@/lib/envParse";
+import AfterScriptEditor, {
+  AfterScriptValue,
+  emptyAfterScript,
+} from "@/components/AfterScriptEditor";
 
 type RunMode = "sequential" | "parallel";
 
@@ -35,6 +39,8 @@ interface Project {
   ports?: number[];
   envVars: Array<{ key: string; value: string }>;
   cfSubdomain: string | null;
+  afterStart?: AfterScriptValue;
+  afterStop?: AfterScriptValue;
   status: string;
   outputLink: string | null;
   outputLinks?: Array<{ port: number; url: string }>;
@@ -58,6 +64,8 @@ interface EditForm {
   runMode: RunMode;
   ports: string[];
   envVars: EnvRow[];
+  afterStart: AfterScriptValue;
+  afterStop: AfterScriptValue;
 }
 
 const MAX_LIST = 5;
@@ -164,6 +172,14 @@ export default function ProjectPage() {
       runMode: project.runMode ?? "sequential",
       ports: (project.ports?.length ? project.ports : [project.port]).map(String),
       envVars: project.envVars.map((v) => ({ ...v, id: rowId() })),
+      afterStart: {
+        commands: project.afterStart?.commands ?? [],
+        file: project.afterStart?.file ?? "",
+      },
+      afterStop: {
+        commands: project.afterStop?.commands ?? [],
+        file: project.afterStop?.file ?? "",
+      },
     });
     setEditing(true);
   };
@@ -235,6 +251,8 @@ export default function ProjectPage() {
           envVars: form.envVars
             .filter((v) => v.key.trim())
             .map(({ key, value }) => ({ key: key.trim(), value })),
+          afterStart: form.afterStart,
+          afterStop: form.afterStop,
         }),
       });
       if (!res.ok) {
@@ -573,6 +591,23 @@ export default function ProjectPage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* After-scripts */}
+          <div className="space-y-3">
+            <label className="input-label mb-0">After-scripts</label>
+            <AfterScriptEditor
+              label="After app starts"
+              hint="Runs once after the app is healthy (migrations, seeding, warm-up). One-shot."
+              value={form.afterStart}
+              onChange={(v) => setForm({ ...form, afterStart: v })}
+            />
+            <AfterScriptEditor
+              label="On teardown (stop / fail / rotate)"
+              hint="Runs on teardown (cleanup, notifications). Best-effort."
+              value={form.afterStop}
+              onChange={(v) => setForm({ ...form, afterStop: v })}
+            />
           </div>
 
           <p className="text-xs text-slate-500">

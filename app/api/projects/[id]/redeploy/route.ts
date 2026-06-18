@@ -44,6 +44,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       runCommand: project.runCommand,
       ports: project.ports?.length ? project.ports : [project.port],
       cfWorkersKey: effectiveCfKey,
+      afterStart: project.afterStartScript || "",
+      afterStop: project.afterStopScript || "",
     });
   } catch (ghError) {
     console.error("Failed to re-trigger GitHub workflow:", ghError);

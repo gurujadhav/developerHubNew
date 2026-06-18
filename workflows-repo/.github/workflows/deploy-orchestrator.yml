@@ -36,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      after_b64:
+        description: "Base64 JSON {start, stop} of after-scripts"
+        required: false
+        default: ""
+        type: string
 
 env:
   VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
@@ -98,6 +103,7 @@ jobs:
           RUN_CMD: ${{ inputs.run_command }}
           PORTS: ${{ inputs.ports }}
           CF_KEY: ${{ inputs.cf_workers_key }}
+          AFTER_B64: ${{ inputs.after_b64 }}
         run: |
           echo "Triggering server-${SERVER_NUM}.yml for project ${PROJECT_ID}..."
 
@@ -112,6 +118,7 @@ jobs:
             --arg wh_url    "${VERCEL_APP_URL}/api/webhook/update-link" \
             --arg wh_secret "$WEBHOOK_SECRET" \
             --arg cf_key    "${CF_KEY:-}" \
+            --arg after_b64 "${AFTER_B64:-}" \
             '{
               ref: $ref,
               inputs: {
@@ -123,7 +130,8 @@ jobs:
                 ports:          $ports,
                 webhook_url:    $wh_url,
                 webhook_secret: $wh_secret,
-                cf_workers_key: $cf_key
+                cf_workers_key: $cf_key,
+                after_b64:      $after_b64
               }
             }' > /tmp/payload.json
 

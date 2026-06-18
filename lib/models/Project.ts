@@ -14,6 +14,11 @@ export interface OutputLink {
   url: string;
 }
 
+export interface AfterScript {
+  commands: string[];
+  file: string;
+}
+
 export interface IProject extends Document {
   userId: mongoose.Types.ObjectId;
   name: string;
@@ -25,6 +30,11 @@ export interface IProject extends Document {
   runMode: RunMode;         // how runCommands are combined
   port: number;        // primary port (backward compat = ports[0])
   ports: number[];     // up to 5 ports, each gets its own tunnel
+  // After-scripts (structured for editing + composed string sent to the runner)
+  afterStart: AfterScript;       // runs once after the app is healthy
+  afterStartScript: string;
+  afterStop: AfterScript;        // runs on teardown (stop / fail / rotate)
+  afterStopScript: string;
   // Cloudflare
   cfSubdomain: string | null;
   cfWorkersKey: string | null;     // project-level CF key (overrides user key)
@@ -54,6 +64,14 @@ const OutputLinkSchema = new mongoose.Schema<OutputLink>(
   {
     port: { type: Number, required: true },
     url: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const AfterScriptSchema = new mongoose.Schema<AfterScript>(
+  {
+    commands: { type: [String], default: [] },
+    file: { type: String, default: "" },
   },
   { _id: false }
 );
@@ -103,6 +121,10 @@ const ProjectSchema = new mongoose.Schema<IProject>(
       enum: ["parallel", "sequential"],
       default: "sequential",
     },
+    afterStart: { type: AfterScriptSchema, default: () => ({ commands: [], file: "" }) },
+    afterStartScript: { type: String, default: "" },
+    afterStop: { type: AfterScriptSchema, default: () => ({ commands: [], file: "" }) },
+    afterStopScript: { type: String, default: "" },
     port: {
       type: Number,
       default: 3000,

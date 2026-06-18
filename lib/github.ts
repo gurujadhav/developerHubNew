@@ -94,6 +94,14 @@ export async function getLatestWorkflowRunId(workflowNumber: number): Promise<st
 /** Workflow file that orchestrates a new deployment */
 const DEPLOY_WORKFLOW_FILE = "deploy-orchestrator.yml";
 
+/** Pack the two after-script phases into one base64 input (stays within the
+ *  workflow_dispatch 10-input limit). */
+export function afterScriptsToBase64(afterStart: string, afterStop: string): string {
+  return Buffer.from(
+    JSON.stringify({ start: afterStart ?? "", stop: afterStop ?? "" })
+  ).toString("base64");
+}
+
 /** Trigger the deploy orchestrator workflow for an initial deployment / redeploy */
 export async function triggerDeployWorkflow(params: {
   projectId: string;
@@ -103,6 +111,8 @@ export async function triggerDeployWorkflow(params: {
   runCommand: string;
   ports: number[];
   cfWorkersKey?: string;
+  afterStart?: string;
+  afterStop?: string;
 }) {
   const response = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${DEPLOY_WORKFLOW_FILE}/dispatches`,
@@ -124,6 +134,7 @@ export async function triggerDeployWorkflow(params: {
           run_command: params.runCommand,
           ports: params.ports.join(","),
           cf_workers_key: params.cfWorkersKey ?? "",
+          after_b64: afterScriptsToBase64(params.afterStart ?? "", params.afterStop ?? ""),
         },
       }),
     }
