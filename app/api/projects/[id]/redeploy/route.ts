@@ -3,7 +3,7 @@ import { isValidObjectId } from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import User from "@/lib/models/User";
-import { triggerMasterWorkflow, envVarsToBase64, cancelWorkflowRun } from "@/lib/github";
+import { triggerDeployWorkflow, envVarsToBase64, cancelWorkflowRun } from "@/lib/github";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -36,8 +36,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   await project.save();
 
   try {
-    await triggerMasterWorkflow({
-      action: "deploy_new",
+    await triggerDeployWorkflow({
       projectId: project._id.toString(),
       repoUrl: project.repoUrl,
       pat: project.pat || "",

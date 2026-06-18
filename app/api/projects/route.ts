@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import User from "@/lib/models/User";
-import { triggerMasterWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/github";
+import { triggerDeployWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/github";
 
 // GET /api/projects - list user's projects
 export async function GET(request: NextRequest) {
@@ -90,8 +90,7 @@ export async function POST(request: NextRequest) {
     const effectiveCfKey = cfWorkersKey || user?.cfWorkersKey || "";
 
     try {
-      await triggerMasterWorkflow({
-        action: "deploy_new",
+      await triggerDeployWorkflow({
         projectId: project._id.toString(),
         repoUrl,
         pat: cleanPat,

@@ -91,9 +91,11 @@ export async function getLatestWorkflowRunId(workflowNumber: number): Promise<st
   return data.workflow_runs?.[0]?.id?.toString() ?? null;
 }
 
-/** Trigger the master workflow for initial deployment */
-export async function triggerMasterWorkflow(params: {
-  action: "deploy_new";
+/** Workflow file that orchestrates a new deployment */
+const DEPLOY_WORKFLOW_FILE = "deploy-orchestrator.yml";
+
+/** Trigger the deploy orchestrator workflow for an initial deployment / redeploy */
+export async function triggerDeployWorkflow(params: {
   projectId: string;
   repoUrl: string;
   pat: string;
@@ -103,7 +105,7 @@ export async function triggerMasterWorkflow(params: {
   cfWorkersKey?: string;
 }) {
   const response = await fetch(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/master.yml/dispatches`,
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${DEPLOY_WORKFLOW_FILE}/dispatches`,
     {
       method: "POST",
       headers: {
@@ -115,7 +117,6 @@ export async function triggerMasterWorkflow(params: {
       body: JSON.stringify({
         ref: "main",
         inputs: {
-          action: params.action,
           project_id: params.projectId,
           repo_url: params.repoUrl,
           pat: params.pat,
