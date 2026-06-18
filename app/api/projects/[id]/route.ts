@@ -3,6 +3,8 @@ import { isValidObjectId } from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import { cancelWorkflowRun } from "@/lib/github";
+import { normalizePorts } from "@/lib/ports";
+import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -32,10 +34,27 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
   const body = await request.json();
-  const allowedUpdates = ["name", "runCommand", "port", "cfWorkersKey", "cfKvNamespaceId", "envVars"];
+  const allowedUpdates = ["name", "cfWorkersKey", "cfKvNamespaceId", "envVars"];
   for (const key of allowedUpdates) {
     if (key in body) (project as any)[key] = body[key];
   }
+
+  // Ports (1–5): keep `port` as the primary for backward compatibility.
+  if ("ports" in body || "port" in body) {
+    const ports = normalizePorts(body.ports, body.port);
+    project.ports = ports;
+    project.port = ports[0];
+  }
+
+  // Run commands (1–5) + mode: recompose the effective runCommand.
+  if ("runCommands" in body || "runMode" in body || "runCommand" in body) {
+    const runCommands = normalizeCommands(body.runCommands, body.runCommand);
+    const runMode = normalizeRunMode(body.runMode ?? project.runMode);
+    project.runCommands = runCommands;
+    project.runMode = runMode;
+    project.runCommand = composeRunCommand(runCommands, runMode);
+  }
+
   await project.save();
 
   // Never return the stored PAT to the client.

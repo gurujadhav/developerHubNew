@@ -2,9 +2,16 @@ import mongoose, { Document, Model } from "mongoose";
 
 export type ProjectStatus = "pending" | "deploying" | "running" | "failed" | "stopped";
 
+export type RunMode = "parallel" | "sequential";
+
 export interface EnvVar {
   key: string;
   value: string;
+}
+
+export interface OutputLink {
+  port: number;
+  url: string;
 }
 
 export interface IProject extends Document {
@@ -13,15 +20,19 @@ export interface IProject extends Document {
   repoUrl: string;
   pat: string;
   envVars: EnvVar[];
-  runCommand: string;
-  port: number;
+  runCommand: string;       // composed command actually sent to the runner
+  runCommands: string[];    // individual commands (up to 5)
+  runMode: RunMode;         // how runCommands are combined
+  port: number;        // primary port (backward compat = ports[0])
+  ports: number[];     // up to 5 ports, each gets its own tunnel
   // Cloudflare
   cfSubdomain: string | null;
   cfWorkersKey: string | null;     // project-level CF key (overrides user key)
   cfKvNamespaceId: string | null;
   // State
   status: ProjectStatus;
-  outputLink: string | null;
+  outputLink: string | null;       // primary tunnel URL (backward compat = outputLinks[0])
+  outputLinks: OutputLink[];       // one URL per exposed port
   activeWorkflow: number | null;   // 1–12
   activeWorkflowRunId: string | null;
   lastCronRun: Date | null;
@@ -35,6 +46,14 @@ const EnvVarSchema = new mongoose.Schema<EnvVar>(
   {
     key: { type: String, required: true },
     value: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const OutputLinkSchema = new mongoose.Schema<OutputLink>(
+  {
+    port: { type: Number, required: true },
+    url: { type: String, required: true },
   },
   { _id: false }
 );
@@ -71,9 +90,30 @@ const ProjectSchema = new mongoose.Schema<IProject>(
       default: "pnpm dev",
       trim: true,
     },
+    runCommands: {
+      type: [String],
+      default: ["pnpm dev"],
+      validate: {
+        validator: (arr: string[]) => arr.length >= 1 && arr.length <= 5,
+        message: "A project must have between 1 and 5 run commands",
+      },
+    },
+    runMode: {
+      type: String,
+      enum: ["parallel", "sequential"],
+      default: "sequential",
+    },
     port: {
       type: Number,
       default: 3000,
+    },
+    ports: {
+      type: [Number],
+      default: [3000],
+      validate: {
+        validator: (arr: number[]) => arr.length >= 1 && arr.length <= 5,
+        message: "A project must expose between 1 and 5 ports",
+      },
     },
     cfSubdomain: { type: String, default: null },
     cfWorkersKey: { type: String, default: null },
@@ -84,6 +124,7 @@ const ProjectSchema = new mongoose.Schema<IProject>(
       default: "pending",
     },
     outputLink: { type: String, default: null },
+    outputLinks: { type: [OutputLinkSchema], default: [] },
     activeWorkflow: { type: Number, default: null },
     activeWorkflowRunId: { type: String, default: null },
     lastCronRun: { type: Date, default: null },

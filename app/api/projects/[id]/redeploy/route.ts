@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       pat: project.pat || "",
       envB64,
       runCommand: project.runCommand,
-      port: project.port,
+      ports: project.ports?.length ? project.ports : [project.port],
       cfWorkersKey: effectiveCfKey,
     });
   } catch (ghError) {

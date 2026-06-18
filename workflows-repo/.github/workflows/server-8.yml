@@ -22,12 +22,12 @@ on:
         default: ""
         type: string
       run_command:
-        description: "Command to start the app (single command only)"
+        description: "Command to start the app (composed by the platform)"
         required: false
         default: "pnpm dev"
         type: string
-      port:
-        description: "Port the app listens on"
+      ports:
+        description: "Comma-separated ports the app listens on (max 5)"
         required: false
         default: "3000"
         type: string
@@ -40,7 +40,7 @@ on:
         required: true
         type: string
       cf_workers_key:
-        description: "Cloudflare Workers API token (optional — uses shared tunnel if empty)"
+        description: "Cloudflare Workers API token (optional - shared tunnel if empty)"
         required: false
         default: ""
         type: string
@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      # ── 1. Install cloudflared ────────────────────────────────────────────────
+      # --- 1. Install cloudflared ---
       - name: Install cloudflared
         run: |
           curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
@@ -61,20 +61,20 @@ jobs:
           sudo apt-get update -q && sudo apt-get install -y cloudflared
           cloudflared --version
 
-      # ── 2. Node.js ───────────────────────────────────────────────────────────
+      # --- 2. Node.js ---
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      # ── 3. pnpm ──────────────────────────────────────────────────────────────
+      # --- 3. pnpm ---
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: latest
           run_install: false
 
-      # ── 4. Clone user repo ───────────────────────────────────────────────────
+      # --- 4. Clone user repo ---
       - name: Clone repository
         env:
           PAT: ${{ inputs.pat }}
@@ -91,7 +91,7 @@ jobs:
           fi
           echo "Cloned $REPO_URL"
 
-      # ── 5. Restore node_modules cache ────────────────────────────────────────
+      # --- 5. Restore node_modules cache ---
       - name: Restore node_modules cache
         id: nm-cache
         uses: actions/cache@v4
@@ -100,7 +100,7 @@ jobs:
           key: nm-${{ inputs.project_id }}-${{ hashFiles('project/pnpm-lock.yaml', 'project/package-lock.json', 'project/yarn.lock') }}
           restore-keys: nm-${{ inputs.project_id }}-
 
-      # ── 6. Write .env file ───────────────────────────────────────────────────
+      # --- 6. Write .env file ---
       - name: Write .env file
         if: inputs.env_b64 != ''
         env:
@@ -111,7 +111,7 @@ jobs:
           [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
           echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
 
-      # ── 7. Install dependencies ──────────────────────────────────────────────
+      # --- 7. Install dependencies ---
       - name: Install dependencies
         working-directory: project
         run: |
@@ -123,21 +123,28 @@ jobs:
             pnpm install
           fi
 
-      # ── 8. Start the application ─────────────────────────────────────────────
+      # --- 8. Start the application ---
       - name: Start application
         working-directory: project
         env:
-          PORT: ${{ inputs.port }}
+          PORTS: ${{ inputs.ports }}
           RUN_CMD: ${{ inputs.run_command }}
         run: |
+          PORTS=$(printf '%s' "$PORTS" | tr -d '[:space:]')
+          IFS=',' read -ra PORT_ARR <<< "$PORTS"
+          PORT_ARR=("${PORT_ARR[@]:0:5}")
+          PRIMARY_PORT="${PORT_ARR[0]}"
+          echo "PORTS=$PORTS" >> "$GITHUB_ENV"
+          echo "Ports: ${PORT_ARR[*]} (primary: $PRIMARY_PORT)"
+
           nohup sh -c "$RUN_CMD" > /tmp/app.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
 
-          echo "Waiting for app on port $PORT..."
+          echo "Waiting for app on primary port $PRIMARY_PORT..."
           for i in $(seq 1 60); do
-            if curl -sf "http://localhost:${PORT}" > /dev/null 2>&1; then
-              echo "App is up after ${i}× 5 s"
+            if curl -sf "http://localhost:${PRIMARY_PORT}" > /dev/null 2>&1; then
+              echo "App is up after $((i * 5))s"
               APP_READY=true
               break
             fi
@@ -145,40 +152,52 @@ jobs:
           done
 
           if [ -z "${APP_READY}" ]; then
-            echo "::error::App did not respond on port $PORT within 5 minutes"
-            cat /tmp/app.log | tail -50
+            echo "::error::App did not respond on port $PRIMARY_PORT within 5 minutes"
+            tail -50 /tmp/app.log
             exit 1
           fi
 
-      # ── 9. Start Cloudflare tunnel ───────────────────────────────────────────
-      - name: Start Cloudflare quick tunnel
-        env:
-          PORT: ${{ inputs.port }}
+      # --- 9. Start Cloudflare tunnels (one per port) ---
+      - name: Start Cloudflare quick tunnels
         run: |
-          nohup cloudflared tunnel --url "http://localhost:${PORT}" \
-            --no-autoupdate > /tmp/tunnel.log 2>&1 &
-          TUNNEL_PID=$!
-          echo "TUNNEL_PID=$TUNNEL_PID" >> "$GITHUB_ENV"
+          IFS=',' read -ra PORT_ARR <<< "$PORTS"
+          PORT_ARR=("${PORT_ARR[@]:0:5}")
 
-          echo "Waiting for tunnel URL..."
-          TUNNEL_URL=""
-          for i in $(seq 1 30); do
-            TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1 || true)
-            if [ -n "$TUNNEL_URL" ]; then
-              echo "Tunnel URL: $TUNNEL_URL"
-              echo "TUNNEL_URL=$TUNNEL_URL" >> "$GITHUB_ENV"
-              break
+          : > /tmp/tunnels.env          # one "port=pid=url" line per tunnel
+          TUNNELS_JSON="[]"
+
+          for p in "${PORT_ARR[@]}"; do
+            [ -z "$p" ] && continue
+            logf="/tmp/tunnel_${p}.log"
+            nohup cloudflared tunnel --url "http://localhost:${p}" \
+              --no-autoupdate > "$logf" 2>&1 &
+            tpid=$!
+
+            url=""
+            for i in $(seq 1 30); do
+              url=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
+              [ -n "$url" ] && break
+              sleep 3
+            done
+
+            if [ -z "$url" ]; then
+              echo "::error::Could not obtain tunnel URL for port $p"
+              cat "$logf"
+              exit 1
             fi
-            sleep 3
+
+            echo "Port $p -> $url"
+            echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
+            TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
           done
 
-          if [ -z "$TUNNEL_URL" ]; then
-            echo "::error::Could not obtain cloudflared tunnel URL"
-            cat /tmp/tunnel.log
-            exit 1
-          fi
+          PRIMARY_URL=$(echo "$TUNNELS_JSON" | jq -r '.[0].url')
+          {
+            echo "TUNNELS_JSON=$TUNNELS_JSON"
+            echo "TUNNEL_URL=$PRIMARY_URL"
+          } >> "$GITHUB_ENV"
 
-      # ── 10. Write project cache file ─────────────────────────────────────────
+      # --- 10. Write project cache file ---
       - name: Write project cache
         env:
           PROJECT_ID: ${{ inputs.project_id }}
@@ -201,77 +220,98 @@ jobs:
           path: /tmp/cache
           key: project-cache-${{ inputs.project_id }}-${{ github.run_id }}
 
-      # ── 11. Notify Vercel app — running ──────────────────────────────────────
-      - name: Notify webhook — running
+      # --- 11. Notify Vercel app - running ---
+      - name: Notify webhook - running
         env:
           WEBHOOK_URL: ${{ inputs.webhook_url }}
           WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
           PROJECT_ID: ${{ inputs.project_id }}
           RUN_ID: ${{ github.run_id }}
         run: |
+          PAYLOAD=$(jq -n \
+            --arg pid "$PROJECT_ID" \
+            --arg url "$TUNNEL_URL" \
+            --argjson tunnels "$TUNNELS_JSON" \
+            --arg wf "8" \
+            --arg rid "$RUN_ID" \
+            '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
           curl -fsSX POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "x-webhook-secret: $WEBHOOK_SECRET" \
-            -d "{
-              \"project_id\": \"$PROJECT_ID\",
-              \"tunnel_url\": \"$TUNNEL_URL\",
-              \"status\": \"running\",
-              \"workflow_number\": \"1\",
-              \"run_id\": \"$RUN_ID\"
-            }"
+            --data-binary "$PAYLOAD"
 
-      # ── 12. Keep alive loop ──────────────────────────────────────────────────
+      # --- 12. Keep alive loop ---
       - name: Keep alive
         env:
-          PORT: ${{ inputs.port }}
           RUN_CMD: ${{ inputs.run_command }}
           WEBHOOK_URL: ${{ inputs.webhook_url }}
           WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
           PROJECT_ID: ${{ inputs.project_id }}
+          RUN_ID: ${{ github.run_id }}
         working-directory: project
         run: |
+          PRIMARY_PORT=$(echo "$PORTS" | cut -d',' -f1)
+
+          rebuild_json() {
+            local tj="[]"
+            while IFS='=' read -r p tpid url; do
+              [ -z "$p" ] && continue
+              tj=$(echo "$tj" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
+            done < /tmp/tunnels.env
+            echo "$tj"
+          }
+
+          notify_running() {
+            local tj="$1"
+            local purl
+            purl=$(echo "$tj" | jq -r '.[0].url')
+            local payload
+            payload=$(jq -n --arg pid "$PROJECT_ID" --arg url "$purl" --argjson tunnels "$tj" \
+              --arg wf "8" --arg rid "$RUN_ID" \
+              '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
+            curl -fsSX POST "$WEBHOOK_URL" -H "Content-Type: application/json" \
+              -H "x-webhook-secret: $WEBHOOK_SECRET" --data-binary "$payload" || true
+          }
+
           RESTARTS=0
           while true; do
             sleep 30
 
-            # Check app process
             if ! kill -0 "$APP_PID" 2>/dev/null; then
-              echo "App process died — restarting (restart #$((++RESTARTS)))..."
+              echo "App process died - restarting (restart #$((++RESTARTS)))..."
               nohup sh -c "$RUN_CMD" > /tmp/app.log 2>&1 &
               APP_PID=$!
-
-              # Wait for it to come back
               for i in $(seq 1 30); do
-                if curl -sf "http://localhost:${PORT}" > /dev/null 2>&1; then
-                  echo "App restarted successfully"
-                  break
-                fi
+                curl -sf "http://localhost:${PRIMARY_PORT}" > /dev/null 2>&1 && { echo "App restarted"; break; }
                 sleep 5
               done
             fi
 
-            # Check tunnel process
-            if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-              echo "Tunnel died — restarting tunnel..."
-              nohup cloudflared tunnel --url "http://localhost:${PORT}" \
-                --no-autoupdate > /tmp/tunnel.log 2>&1 &
-              TUNNEL_PID=$!
-
-              # Re-extract URL and notify
-              sleep 10
-              NEW_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1 || true)
-              if [ -n "$NEW_URL" ] && [ "$NEW_URL" != "$TUNNEL_URL" ]; then
-                TUNNEL_URL=$NEW_URL
-                curl -fsSX POST "$WEBHOOK_URL" \
-                  -H "Content-Type: application/json" \
-                  -H "x-webhook-secret: $WEBHOOK_SECRET" \
-                  -d "{\"project_id\":\"$PROJECT_ID\",\"tunnel_url\":\"$TUNNEL_URL\",\"status\":\"running\",\"workflow_number\":\"1\",\"run_id\":\"$GITHUB_RUN_ID\"}"
+            changed=0
+            tmpfile=$(mktemp)
+            while IFS='=' read -r p tpid url; do
+              [ -z "$p" ] && continue
+              if ! kill -0 "$tpid" 2>/dev/null; then
+                echo "Tunnel for port $p died - restarting..."
+                logf="/tmp/tunnel_${p}.log"
+                nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
+                tpid=$!
+                sleep 10
+                newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
+                [ -n "$newurl" ] && { url="$newurl"; changed=1; }
               fi
+              echo "${p}=${tpid}=${url}" >> "$tmpfile"
+            done < /tmp/tunnels.env
+            mv "$tmpfile" /tmp/tunnels.env
+
+            if [ "$changed" = "1" ]; then
+              echo "Tunnel URL(s) changed - notifying webhook"
+              notify_running "$(rebuild_json)"
             fi
           done
 
-      # ── 13. Notify Vercel app — stopped (always runs) ────────────────────────
-      - name: Notify webhook — stopped
+      # --- 13. Notify Vercel app - stopped (always runs) ---
+      - name: Notify webhook - stopped
         if: always()
         env:
           WEBHOOK_URL: ${{ inputs.webhook_url }}
@@ -289,6 +329,6 @@ jobs:
             -d "{
               \"project_id\": \"$PROJECT_ID\",
               \"status\": \"$STATUS\",
-              \"workflow_number\": \"1\",
+              \"workflow_number\": \"8\",
               \"run_id\": \"$RUN_ID\"
             }" || true

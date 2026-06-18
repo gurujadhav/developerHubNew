@@ -44,7 +44,7 @@ jobs:
         if: steps.fetch.outputs.count != '0'
         run: |
           python3 << 'PYEOF'
-          import json, subprocess, random, time, os, base64
+          import json, subprocess, random, os, base64
 
           VERCEL  = os.environ["VERCEL_APP_URL"]
           SECRET  = os.environ["WEBHOOK_SECRET"]
@@ -53,17 +53,19 @@ jobs:
           REPO    = os.environ["REPO_NAME"]
           SERVERS = int(os.environ["TOTAL_SERVERS"])
 
+          # Only rotate projects that are actually live. A "deploying" project is
+          # already getting a fresh server, so re-dispatching it would stampede.
           with open("/tmp/projects.json") as f:
               projects = [p for p in json.load(f).get("projects", [])
-                          if p.get("status") in ("running", "deploying")]
+                          if p.get("status") == "running"]
 
-          print(f"Rotating {len(projects)} projects", flush=True)
+          print(f"Rotating {len(projects)} running projects", flush=True)
 
           for proj in projects:
-              pid        = str(proj["_id"])
-              cur_wf     = proj.get("activeWorkflow")
-              cur_run_id = proj.get("activeWorkflowRunId")
+              pid    = str(proj["_id"])
+              cur_wf = proj.get("activeWorkflow")
 
+              # Pull the full project (PAT + envVars) from the internal endpoint.
               r = subprocess.run(
                   ["curl", "-sL", "-H", f"x-internal-secret: {SECRET}",
                    f"{VERCEL}/api/projects/{pid}/internal"],
@@ -74,15 +76,16 @@ jobs:
                   print(f"  {pid}: could not fetch full data, skipping", flush=True)
                   continue
 
-              pat      = full.get("pat", "")
               repo_url = full.get("repoUrl", "")
               if not repo_url:
                   print(f"  {pid}: missing repoUrl, skipping", flush=True)
                   continue
 
-              run_cmd  = full.get("runCommand", "pnpm dev")
-              port     = str(full.get("port", 3000))
-              cf_key   = full.get("cfWorkersKey", "") or ""
+              pat        = full.get("pat", "")
+              run_cmd    = full.get("runCommand", "pnpm dev")
+              ports_list = full.get("ports") or [full.get("port", 3000)]
+              ports      = ",".join(str(p) for p in ports_list)
+              cf_key     = full.get("cfWorkersKey", "") or ""
               env_vars = full.get("envVars", [])
               env_b64  = base64.b64encode(
                   "\n".join(f"{v['key']}={v['value']}" for v in env_vars if v.get("key")).encode()
@@ -100,7 +103,7 @@ jobs:
                       "pat":            pat,
                       "env_b64":        env_b64,
                       "run_command":    run_cmd,
-                      "port":           port,
+                      "ports":          ports,
                       "webhook_url":    f"{VERCEL}/api/webhook/update-link",
                       "webhook_secret": SECRET,
                       "cf_workers_key": cf_key,
@@ -110,6 +113,10 @@ jobs:
               with open("/tmp/cron_payload.json", "w") as f:
                   f.write(payload)
 
+              # Dispatch the new server and move on. We do NOT poll or cancel here:
+              # the new server reports "running" to the Vercel webhook, which then
+              # cancels the previous run (make-before-break). If the new server
+              # never comes up, the old one keeps serving and the next cron retries.
               r2 = subprocess.run(
                   ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
                    f"https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/server-{new_wf}.yml/dispatches",
@@ -119,51 +126,11 @@ jobs:
                    "-H", "Content-Type: application/json",
                    "--data-binary", "@/tmp/cron_payload.json"],
                   capture_output=True, text=True)
-              print(f"  Triggered server-{new_wf}: HTTP {r2.stdout.strip()}", flush=True)
-
-              if r2.stdout.strip() != "204":
-                  print(f"  Failed — keeping old workflow", flush=True)
-                  continue
-
-              print(f"  Polling for server-{new_wf} to become active (max 10 min)...", flush=True)
-              confirmed = False
-              new_status, new_active = "unknown", None
-              for attempt in range(1, 21):
-                  time.sleep(30)
-                  r3 = subprocess.run(
-                      ["curl", "-sL", "-H", f"x-internal-secret: {SECRET}", f"{VERCEL}/api/projects"],
-                      capture_output=True, text=True)
-                  try:
-                      updated = next((p for p in json.loads(r3.stdout).get("projects", [])
-                                      if str(p["_id"]) == pid), None)
-                      new_status = updated.get("status") if updated else "unknown"
-                      new_active = updated.get("activeWorkflow") if updated else None
-                  except Exception:
-                      new_status, new_active = "unknown", None
-
-                  print(f"  [{attempt}/20] status={new_status}, activeWorkflow={new_active}", flush=True)
-
-                  if new_status == "running" and new_active == new_wf:
-                      confirmed = True
-                      break
-
-              if confirmed:
-                  print(f"  server-{new_wf} confirmed active!", flush=True)
-                  if cur_run_id:
-                      r4 = subprocess.run(
-                          ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
-                           f"https://api.github.com/repos/{OWNER}/{REPO}/actions/runs/{cur_run_id}/cancel",
-                           "-H", f"Authorization: Bearer {TOKEN}",
-                           "-H", "Accept: application/vnd.github+json",
-                           "-H", "X-GitHub-Api-Version: 2022-11-28"],
-                          capture_output=True, text=True)
-                      print(f"  Cancelled old run {cur_run_id}: HTTP {r4.stdout.strip()}", flush=True)
-                  else:
-                      print(f"  No old run ID recorded — nothing to cancel", flush=True)
+              code = r2.stdout.strip()
+              if code == "204":
+                  print(f"  Dispatched server-{new_wf}; app will cut over and cancel the old run when it reports running.", flush=True)
               else:
-                  print(f"  Timed out after 10 min — server-{new_wf} not confirmed, keeping old one running", flush=True)
-
-              time.sleep(5)
+                  print(f"  Failed to dispatch server-{new_wf}: HTTP {code} — keeping current server", flush=True)
 
           print("Cron maintenance done", flush=True)
           PYEOF

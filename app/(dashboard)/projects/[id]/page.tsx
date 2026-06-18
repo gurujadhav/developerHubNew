@@ -22,16 +22,22 @@ import {
 } from "lucide-react";
 import { parseEnvFile } from "@/lib/envParse";
 
+type RunMode = "sequential" | "parallel";
+
 interface Project {
   _id: string;
   name: string;
   repoUrl: string;
   runCommand: string;
+  runCommands?: string[];
+  runMode?: RunMode;
   port: number;
+  ports?: number[];
   envVars: Array<{ key: string; value: string }>;
   cfSubdomain: string | null;
   status: string;
   outputLink: string | null;
+  outputLinks?: Array<{ port: number; url: string }>;
   activeWorkflow: number | null;
   activeWorkflowRunId: string | null;
   deployedAt: string | null;
@@ -48,10 +54,13 @@ interface EnvRow {
 
 interface EditForm {
   name: string;
-  runCommand: string;
-  port: string;
+  runCommands: string[];
+  runMode: RunMode;
+  ports: string[];
   envVars: EnvRow[];
 }
+
+const MAX_LIST = 5;
 
 const rowId = () => Math.random().toString(36).slice(2);
 
@@ -150,8 +159,10 @@ export default function ProjectPage() {
     setSaveError("");
     setForm({
       name: project.name,
-      runCommand: project.runCommand,
-      port: String(project.port),
+      runCommands:
+        project.runCommands?.length ? project.runCommands : [project.runCommand || "pnpm dev"],
+      runMode: project.runMode ?? "sequential",
+      ports: (project.ports?.length ? project.ports : [project.port]).map(String),
       envVars: project.envVars.map((v) => ({ ...v, id: rowId() })),
     });
     setEditing(true);
@@ -161,6 +172,18 @@ export default function ProjectPage() {
     setEditing(false);
     setForm(null);
   };
+
+  type ListField = "runCommands" | "ports";
+  const updateListItem = (field: ListField, i: number, value: string) =>
+    setForm((f) => (f ? { ...f, [field]: f[field].map((v, idx) => (idx === i ? value : v)) } : f));
+  const addListItem = (field: ListField) =>
+    setForm((f) =>
+      f && f[field].length < MAX_LIST ? { ...f, [field]: [...f[field], ""] } : f
+    );
+  const removeListItem = (field: ListField, i: number) =>
+    setForm((f) =>
+      f && f[field].length > 1 ? { ...f, [field]: f[field].filter((_, idx) => idx !== i) } : f
+    );
 
   const addEnvVar = () =>
     setForm((f) =>
@@ -206,8 +229,9 @@ export default function ProjectPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name.trim(),
-          runCommand: form.runCommand.trim() || "pnpm dev",
-          port: Number(form.port) || 3000,
+          runCommands: form.runCommands.map((c) => c.trim()).filter(Boolean),
+          runMode: form.runMode,
+          ports: form.ports.map((p) => Number(p)).filter((p) => p > 0),
           envVars: form.envVars
             .filter((v) => v.key.trim())
             .map(({ key, value }) => ({ key: key.trim(), value })),
@@ -235,6 +259,14 @@ export default function ProjectPage() {
   }
 
   const canRedeploy = project.status !== "deploying";
+
+  // Prefer the per-port outputLinks; fall back to the legacy single outputLink.
+  const liveLinks: Array<{ port: number; url: string }> =
+    project.outputLinks && project.outputLinks.length > 0
+      ? project.outputLinks
+      : project.outputLink
+      ? [{ port: project.ports?.[0] ?? project.port, url: project.outputLink }]
+      : [];
 
   return (
     <div className="max-w-3xl space-y-6 animate-fade-in">
@@ -286,26 +318,29 @@ export default function ProjectPage() {
         </div>
       </div>
 
-      {/* Output link */}
-      {project.outputLink && (
-        <div className="card p-4 border-gold-500/20 bg-navy-800/30">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs text-slate-500 mb-1 font-semibold uppercase tracking-wider">
-                Live URL
-              </p>
-              <p className="font-mono text-sm text-gold-400 truncate">{project.outputLink}</p>
+      {/* Live URLs (one per port) */}
+      {liveLinks.length > 0 && (
+        <div className="card p-4 border-gold-500/20 bg-navy-800/30 space-y-3">
+          <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
+            {liveLinks.length > 1 ? "Live URLs" : "Live URL"}
+          </p>
+          {liveLinks.map((link) => (
+            <div key={`${link.port}-${link.url}`} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs text-slate-500 font-mono">port {link.port}</p>
+                <p className="font-mono text-sm text-gold-400 truncate">{link.url}</p>
+              </div>
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary text-sm shrink-0"
+              >
+                <ExternalLink size={14} />
+                Open
+              </a>
             </div>
-            <a
-              href={project.outputLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-primary text-sm shrink-0"
-            >
-              <ExternalLink size={14} />
-              Open
-            </a>
-          </div>
+          ))}
         </div>
       )}
 
@@ -373,25 +408,103 @@ export default function ProjectPage() {
             />
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          {/* Run mode */}
+          {form.runCommands.length > 1 && (
             <div>
-              <label className="input-label">Run command</label>
-              <input
-                className="input font-mono"
-                value={form.runCommand}
-                onChange={(e) => setForm({ ...form, runCommand: e.target.value })}
-              />
+              <label className="input-label">Run mode</label>
+              <div className="flex gap-2">
+                {(["sequential", "parallel"] as RunMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setForm({ ...form, runMode: m })}
+                    className={`flex-1 text-sm py-2 rounded-lg border transition-colors ${
+                      form.runMode === m
+                        ? "border-gold-500/50 bg-gold-500/10 text-gold-400"
+                        : "border-navy-600 text-slate-400 hover:border-navy-500"
+                    }`}
+                  >
+                    {m === "sequential" ? "Sequential (one by one)" : "Parallel (all at once)"}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div>
-              <label className="input-label">Port</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                className="input font-mono"
-                value={form.port}
-                onChange={(e) => setForm({ ...form, port: e.target.value })}
-              />
+          )}
+
+          {/* Run commands */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="input-label mb-0">Run command(s)</label>
+              <button
+                type="button"
+                onClick={() => addListItem("runCommands")}
+                disabled={form.runCommands.length >= MAX_LIST}
+                className="btn-ghost text-xs py-1 px-2 disabled:opacity-40"
+              >
+                <Plus size={12} />
+                Add
+              </button>
+            </div>
+            <div className="space-y-2">
+              {form.runCommands.map((cmd, i) => (
+                <div key={i} className="flex gap-2">
+                  <input
+                    className="input font-mono flex-1"
+                    placeholder="pnpm dev"
+                    value={cmd}
+                    onChange={(e) => updateListItem("runCommands", i, e.target.value)}
+                  />
+                  {form.runCommands.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeListItem("runCommands", i)}
+                      className="btn-ghost p-2 text-slate-600 hover:text-crimson-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Ports */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="input-label mb-0">Port(s)</label>
+              <button
+                type="button"
+                onClick={() => addListItem("ports")}
+                disabled={form.ports.length >= MAX_LIST}
+                className="btn-ghost text-xs py-1 px-2 disabled:opacity-40"
+              >
+                <Plus size={12} />
+                Add
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {form.ports.map((p, i) => (
+                <div key={i} className="flex gap-1 items-center">
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="input font-mono w-28"
+                    placeholder="3000"
+                    value={p}
+                    onChange={(e) => updateListItem("ports", i, e.target.value)}
+                  />
+                  {form.ports.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeListItem("ports", i)}
+                      className="btn-ghost p-2 text-slate-600 hover:text-crimson-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -490,11 +603,26 @@ export default function ProjectPage() {
           <div className="card p-5">
             <h3 className="section-title mb-3">Configuration</h3>
             <div>
-              <InfoRow label="Run command">
-                <code className="font-mono text-gold-400 text-xs">{project.runCommand}</code>
+              <InfoRow label={(project.runCommands?.length ?? 1) > 1 ? "Run commands" : "Run command"}>
+                <div className="flex flex-col items-end gap-0.5">
+                  {(project.runCommands?.length ? project.runCommands : [project.runCommand]).map(
+                    (c, i) => (
+                      <code key={i} className="font-mono text-gold-400 text-xs">
+                        {c}
+                      </code>
+                    )
+                  )}
+                  {(project.runCommands?.length ?? 1) > 1 && (
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+                      {project.runMode ?? "sequential"}
+                    </span>
+                  )}
+                </div>
               </InfoRow>
-              <InfoRow label="Port">
-                <code className="font-mono">{project.port}</code>
+              <InfoRow label={(project.ports?.length ?? 1) > 1 ? "Ports" : "Port"}>
+                <code className="font-mono">
+                  {(project.ports?.length ? project.ports : [project.port]).join(", ")}
+                </code>
               </InfoRow>
               <InfoRow label="Env variables">
                 {project.envVars.length > 0

@@ -28,16 +28,21 @@ interface EnvVar {
   id: string;
 }
 
+type RunMode = "sequential" | "parallel";
+
 interface FormData {
   name: string;
   repoUrl: string;
   pat: string;
-  runCommand: string;
-  port: string;
+  runCommands: string[];
+  runMode: RunMode;
+  ports: string[];
   envVars: EnvVar[];
   cfWorkersKey: string;
   cfKvNamespaceId: string;
 }
+
+const MAX_LIST = 5;
 
 const STEPS = [
   { num: 1 as Step, label: "Basics" },
@@ -58,8 +63,9 @@ export default function NewProjectPage() {
     name: "",
     repoUrl: "",
     pat: "",
-    runCommand: "pnpm dev",
-    port: "3000",
+    runCommands: ["pnpm dev"],
+    runMode: "sequential",
+    ports: ["3000"],
     envVars: [],
     cfWorkersKey: "",
     cfKvNamespaceId: "",
@@ -81,6 +87,16 @@ export default function NewProjectPage() {
     setForm((f) => ({ ...f, [field]: value }));
     if (field === "pat" || field === "repoUrl") setPatResult(null);
   };
+
+  type ListField = "runCommands" | "ports";
+  const updateListItem = (field: ListField, i: number, value: string) =>
+    setForm((f) => ({ ...f, [field]: f[field].map((v, idx) => (idx === i ? value : v)) }));
+  const addListItem = (field: ListField) =>
+    setForm((f) => (f[field].length >= MAX_LIST ? f : { ...f, [field]: [...f[field], ""] }));
+  const removeListItem = (field: ListField, i: number) =>
+    setForm((f) =>
+      f[field].length <= 1 ? f : { ...f, [field]: f[field].filter((_, idx) => idx !== i) }
+    );
 
   const verifyRepo = async () => {
     if (!form.repoUrl) return;
@@ -142,7 +158,10 @@ export default function NewProjectPage() {
       case 2:
         return form.repoUrl.trim().length > 0 && patResult?.valid === true;
       case 3:
-        return form.runCommand.trim().length > 0 && Number(form.port) > 0;
+        return (
+          form.runCommands.some((c) => c.trim().length > 0) &&
+          form.ports.some((p) => Number(p) > 0)
+        );
       case 4:
         return true; // env vars optional
       default:
@@ -161,8 +180,9 @@ export default function NewProjectPage() {
           name: form.name,
           repoUrl: form.repoUrl,
           pat: form.pat,
-          runCommand: form.runCommand,
-          port: Number(form.port),
+          runCommands: form.runCommands.map((c) => c.trim()).filter(Boolean),
+          runMode: form.runMode,
+          ports: form.ports.map((p) => Number(p)).filter((p) => p > 0),
           envVars: form.envVars
             .filter((v) => v.key.trim())
             .map(({ key, value }) => ({ key: key.trim(), value })),
@@ -351,44 +371,122 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* Step 3: Run command */}
+        {/* Step 3: Run commands + ports */}
         {step === 3 && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-4">
+          <div className="space-y-5">
+            <div className="flex items-center gap-2 mb-2">
               <Terminal size={18} className="text-gold-500" />
-              <h2 className="font-display font-semibold text-lg text-white">Run command</h2>
+              <h2 className="font-display font-semibold text-lg text-white">Run commands & ports</h2>
             </div>
 
-            <div className="bg-navy-800/50 border border-navy-600/50 rounded-lg p-4 text-sm text-slate-400">
-              <p className="font-medium text-slate-300 mb-1">Only single commands are supported</p>
-              <p>Use <code className="text-gold-400">pnpm dev</code>, <code className="text-gold-400">npm run dev</code>, or a custom start script. Piped commands (<code className="text-slate-500">cmd1 && cmd2</code>) are not supported.</p>
-            </div>
+            {/* Run mode */}
+            {form.runCommands.length > 1 && (
+              <div>
+                <label className="input-label">Run mode</label>
+                <div className="flex gap-2">
+                  {(["sequential", "parallel"] as RunMode[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, runMode: m }))}
+                      className={`flex-1 text-sm py-2 rounded-lg border transition-colors ${
+                        form.runMode === m
+                          ? "border-gold-500/50 bg-gold-500/10 text-gold-400"
+                          : "border-navy-600 text-slate-400 hover:border-navy-500"
+                      }`}
+                    >
+                      {m === "sequential" ? "Sequential (one by one)" : "Parallel (all at once)"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-600 mt-1.5">
+                  Sequential runs <code className="text-gold-500">cmd1 &amp;&amp; cmd2</code>; parallel starts them together.
+                </p>
+              </div>
+            )}
 
+            {/* Run commands */}
             <div>
-              <label className="input-label">Run command</label>
-              <input
-                type="text"
-                className="input font-mono"
-                placeholder="pnpm dev"
-                value={form.runCommand}
-                onChange={(e) => update("runCommand", e.target.value)}
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="input-label mb-0">Run command(s)</label>
+                <button
+                  type="button"
+                  onClick={() => addListItem("runCommands")}
+                  disabled={form.runCommands.length >= MAX_LIST}
+                  className="btn-ghost text-xs py-1 px-2 disabled:opacity-40"
+                >
+                  <Plus size={12} />
+                  Add command
+                </button>
+              </div>
+              <div className="space-y-2">
+                {form.runCommands.map((cmd, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input
+                      type="text"
+                      className="input font-mono flex-1"
+                      placeholder="pnpm dev"
+                      value={cmd}
+                      onChange={(e) => updateListItem("runCommands", i, e.target.value)}
+                    />
+                    {form.runCommands.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeListItem("runCommands", i)}
+                        className="btn-ghost p-2 text-slate-600 hover:text-crimson-400"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
               <p className="text-xs text-slate-600 mt-1.5">
-                Default: <code className="text-gold-500">pnpm dev</code>
+                Up to {MAX_LIST}. Use single commands — the platform combines them per the run mode.
               </p>
             </div>
 
+            {/* Ports */}
             <div>
-              <label className="input-label">App port</label>
-              <input
-                type="number"
-                className="input font-mono w-32"
-                placeholder="3000"
-                value={form.port}
-                onChange={(e) => update("port", e.target.value)}
-                min={1}
-                max={65535}
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="input-label mb-0">Port(s)</label>
+                <button
+                  type="button"
+                  onClick={() => addListItem("ports")}
+                  disabled={form.ports.length >= MAX_LIST}
+                  className="btn-ghost text-xs py-1 px-2 disabled:opacity-40"
+                >
+                  <Plus size={12} />
+                  Add port
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {form.ports.map((p, i) => (
+                  <div key={i} className="flex gap-1 items-center">
+                    <input
+                      type="number"
+                      className="input font-mono w-28"
+                      placeholder="3000"
+                      value={p}
+                      min={1}
+                      max={65535}
+                      onChange={(e) => updateListItem("ports", i, e.target.value)}
+                    />
+                    {form.ports.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeListItem("ports", i)}
+                        className="btn-ghost p-2 text-slate-600 hover:text-crimson-400"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-600 mt-1.5">
+                Each port gets its own public tunnel URL (max {MAX_LIST}).
+              </p>
             </div>
           </div>
         )}
@@ -526,8 +624,21 @@ export default function NewProjectPage() {
                   label: "Repository",
                   value: form.repoUrl.replace("https://github.com/", ""),
                 },
-                { label: "Run command", value: form.runCommand, mono: true },
-                { label: "Port", value: form.port, mono: true },
+                {
+                  label: "Run command(s)",
+                  value: (() => {
+                    const cmds = form.runCommands.map((c) => c.trim()).filter(Boolean);
+                    return cmds.length > 1
+                      ? `${cmds.length} (${form.runMode})`
+                      : cmds[0] || "pnpm dev";
+                  })(),
+                  mono: true,
+                },
+                {
+                  label: form.ports.length > 1 ? "Ports" : "Port",
+                  value: form.ports.map((p) => p.trim()).filter(Boolean).join(", "),
+                  mono: true,
+                },
                 {
                   label: "Env vars",
                   value: form.envVars.filter((v) => v.key.trim()).length

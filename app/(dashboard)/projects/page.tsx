@@ -20,6 +20,7 @@ interface Project {
   outputLink: string | null;
   runCommand: string;
   port: number;
+  ports?: number[];
   activeWorkflow: number | null;
   createdAt: string;
   deployedAt: string | null;
@@ -136,7 +137,11 @@ export default function ProjectsPage() {
                         <Terminal size={11} />
                         <code className="font-mono">{project.runCommand}</code>
                       </span>
-                      <span className="text-xs text-slate-600">Port {project.port}</span>
+                      <span className="text-xs text-slate-600">
+                        {(project.ports?.length ?? 1) > 1
+                          ? `Ports ${project.ports!.join(", ")}`
+                          : `Port ${project.ports?.[0] ?? project.port}`}
+                      </span>
                       {project.activeWorkflow && (
                         <span className="flex items-center gap-1 text-xs text-slate-600">
                           <Workflow size={11} />

@@ -3,6 +3,8 @@ import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import User from "@/lib/models/User";
 import { triggerDeployWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/github";
+import { normalizePorts } from "@/lib/ports";
+import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
 
 // GET /api/projects - list user's projects
 export async function GET(request: NextRequest) {
@@ -48,6 +50,14 @@ export async function POST(request: NextRequest) {
     // corrupts the git clone URL and downstream auth headers.
     const cleanPat = (pat ?? "").trim();
 
+    // Up to 5 ports; `ports` (array/csv) preferred, legacy `port` as fallback.
+    const ports = normalizePorts(body.ports, port);
+
+    // Up to 5 run commands, combined per runMode into the command sent to the runner.
+    const runCommands = normalizeCommands(body.runCommands, runCommand);
+    const runMode = normalizeRunMode(body.runMode);
+    const composedCommand = composeRunCommand(runCommands, runMode);
+
     if (!name || !repoUrl) {
       return NextResponse.json(
         { error: "name and repoUrl are required" },
@@ -78,8 +88,11 @@ export async function POST(request: NextRequest) {
       repoUrl: repoUrl.trim(),
       pat: cleanPat,
       envVars: envVars ?? [],
-      runCommand: runCommand?.trim() || "pnpm dev",
-      port: port ?? 3000,
+      runCommand: composedCommand,
+      runCommands,
+      runMode,
+      port: ports[0],
+      ports,
       cfWorkersKey: cfWorkersKey || null,
       cfKvNamespaceId: cfKvNamespaceId || null,
       status: "deploying",
@@ -95,8 +108,8 @@ export async function POST(request: NextRequest) {
         repoUrl,
         pat: cleanPat,
         envB64,
-        runCommand: runCommand?.trim() || "pnpm dev",
-        port: port ?? 3000,
+        runCommand: composedCommand,
+        ports,
         cfWorkersKey: effectiveCfKey,
       });
     } catch (ghError) {

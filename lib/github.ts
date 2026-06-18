@@ -101,7 +101,7 @@ export async function triggerDeployWorkflow(params: {
   pat: string;
   envB64: string;
   runCommand: string;
-  port: number;
+  ports: number[];
   cfWorkersKey?: string;
 }) {
   const response = await fetch(
@@ -122,7 +122,7 @@ export async function triggerDeployWorkflow(params: {
           pat: params.pat,
           env_b64: params.envB64,
           run_command: params.runCommand,
-          port: String(params.port),
+          ports: params.ports.join(","),
           cf_workers_key: params.cfWorkersKey ?? "",
         },
       }),

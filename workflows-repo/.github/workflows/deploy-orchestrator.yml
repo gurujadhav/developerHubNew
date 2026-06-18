@@ -26,8 +26,8 @@ on:
         required: false
         default: "pnpm dev"
         type: string
-      port:
-        description: "App port"
+      ports:
+        description: "Comma-separated ports the app listens on (max 5)"
         required: false
         default: "3000"
         type: string
@@ -96,7 +96,7 @@ jobs:
           PAT: ${{ inputs.pat }}
           ENV_B64: ${{ inputs.env_b64 }}
           RUN_CMD: ${{ inputs.run_command }}
-          PORT: ${{ inputs.port }}
+          PORTS: ${{ inputs.ports }}
           CF_KEY: ${{ inputs.cf_workers_key }}
         run: |
           echo "Triggering server-${SERVER_NUM}.yml for project ${PROJECT_ID}..."
@@ -108,7 +108,7 @@ jobs:
             --arg pat       "$PAT" \
             --arg env_b64   "$ENV_B64" \
             --arg run_cmd   "$RUN_CMD" \
-            --arg port      "$PORT" \
+            --arg ports     "$PORTS" \
             --arg wh_url    "${VERCEL_APP_URL}/api/webhook/update-link" \
             --arg wh_secret "$WEBHOOK_SECRET" \
             --arg cf_key    "${CF_KEY:-}" \
@@ -120,7 +120,7 @@ jobs:
                 pat:            $pat,
                 env_b64:        $env_b64,
                 run_command:    $run_cmd,
-                port:           $port,
+                ports:          $ports,
                 webhook_url:    $wh_url,
                 webhook_secret: $wh_secret,
                 cf_workers_key: $cf_key
