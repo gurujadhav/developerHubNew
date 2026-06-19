@@ -21,10 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { parseEnvFile } from "@/lib/envParse";
-import AfterScriptEditor, {
-  AfterScriptValue,
-  emptyAfterScript,
-} from "@/components/AfterScriptEditor";
+import AfterScriptEditor, { AfterScriptValue } from "@/components/AfterScriptEditor";
 
 type RunMode = "sequential" | "parallel";
 
@@ -399,7 +396,7 @@ export default function ProjectPage() {
             <div>
               <p className="text-sm font-semibold text-gold-400">Deployment in progress</p>
               <p className="text-sm text-slate-500 mt-0.5">
-                GitHub Actions is setting up your server workflow and tunnel. This can take 2–5 minutes.
+                The deployment system is setting up your server and public URL. This can take 2–5 minutes.
               </p>
             </div>
           </div>
@@ -738,7 +735,7 @@ export default function ProjectPage() {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-slate-400">
-              This will stop the running server workflow and permanently delete all project data. This cannot be undone.
+              This will stop the running server and permanently delete all project data. This cannot be undone.
             </p>
             <div className="flex items-center gap-2">
               <button onClick={handleDelete} disabled={deleting} className="btn-danger text-sm">

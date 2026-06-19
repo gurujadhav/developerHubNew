@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import dbConnect from "@/lib/mongodb";
 import User from "@/lib/models/User";
 import { signToken, COOKIE_NAME, COOKIE_OPTIONS } from "@/lib/auth";
+import { isSuperAdminEmail } from "@/lib/admin";
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,10 +35,12 @@ export async function POST(request: NextRequest) {
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
+    const normalizedEmail = email.toLowerCase().trim();
     const user = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password: hashedPassword,
+      role: isSuperAdminEmail(normalizedEmail) ? "superadmin" : "user",
     });
 
     const token = await signToken({

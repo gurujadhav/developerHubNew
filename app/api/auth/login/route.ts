@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import dbConnect from "@/lib/mongodb";
 import User from "@/lib/models/User";
 import { signToken, COOKIE_NAME, COOKIE_OPTIONS } from "@/lib/auth";
+import { isSuperAdminEmail } from "@/lib/admin";
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,6 +32,12 @@ export async function POST(request: NextRequest) {
         { error: "Invalid email or password" },
         { status: 401 }
       );
+    }
+
+    // Bootstrap: promote to super-admin if the email is in SUPER_ADMIN_EMAILS.
+    if (user.role !== "superadmin" && isSuperAdminEmail(user.email)) {
+      user.role = "superadmin";
+      await user.save();
     }
 
     const token = await signToken({

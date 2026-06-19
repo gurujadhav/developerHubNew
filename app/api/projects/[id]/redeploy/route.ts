@@ -48,12 +48,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       afterStop: project.afterStopScript || "",
     });
   } catch (ghError) {
-    console.error("Failed to re-trigger GitHub workflow:", ghError);
+    console.error("Failed to re-trigger deployment workflow:", ghError);
     project.status = "failed";
-    project.failureReason = "Failed to trigger redeployment workflow";
+    project.failureReason = "Failed to trigger redeployment";
     await project.save();
     return NextResponse.json(
-      { error: "Failed to trigger redeployment. Check GitHub Actions configuration." },
+      { error: "Failed to trigger redeployment. Check the deployment system configuration." },
       { status: 500 }
     );
   }

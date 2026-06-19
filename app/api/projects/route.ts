@@ -86,8 +86,34 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Get user's CF key as fallback
-    const user = await User.findById(userId).select("cfWorkersKey cfAccountId");
+    // Get user's CF key + access settings
+    const user = await User.findById(userId).select(
+      "cfWorkersKey cfAccountId role canDeploy maxProjects"
+    );
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const isAdmin = user.role === "superadmin";
+
+    // Access gate: the account must be allowed to host projects.
+    if (!isAdmin && !user.canDeploy) {
+      return NextResponse.json(
+        { error: "Your account isn't approved to host projects yet. Contact an administrator." },
+        { status: 403 }
+      );
+    }
+
+    // Quota gate: enforce the per-user project limit (super-admins are unlimited).
+    if (!isAdmin) {
+      const existingCount = await Project.countDocuments({ userId });
+      if (existingCount >= user.maxProjects) {
+        return NextResponse.json(
+          {
+            error: `Project limit reached (${user.maxProjects}). Delete a project or ask an administrator to raise your limit.`,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const project = await Project.create({
       userId,
@@ -126,13 +152,13 @@ export async function POST(request: NextRequest) {
         afterStop: afterStopScript,
       });
     } catch (ghError) {
-      console.error("Failed to trigger GitHub workflow:", ghError);
+      console.error("Failed to trigger deployment workflow:", ghError);
       await Project.findByIdAndUpdate(project._id, {
         status: "failed",
-        failureReason: "Failed to trigger deployment workflow",
+        failureReason: "Failed to trigger deployment",
       });
       return NextResponse.json(
-        { error: "Failed to trigger deployment. Check GitHub Actions configuration." },
+        { error: "Failed to trigger deployment. Check the deployment system configuration." },
         { status: 500 }
       );
     }
