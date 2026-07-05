@@ -1,8 +1,15 @@
 import mongoose, { Document, Model } from "mongoose";
 
-export type ProjectStatus = "pending" | "deploying" | "running" | "failed" | "stopped";
+export type ProjectStatus =
+  | "pending"
+  | "deploying"
+  | "running"
+  | "failed"
+  | "stopped";
 
 export type RunMode = "parallel" | "sequential";
+
+export type ProjectType = "express" | "python";
 
 export interface EnvVar {
   key: string;
@@ -24,26 +31,27 @@ export interface IProject extends Document {
   name: string;
   repoUrl: string;
   pat: string;
+  projectType: ProjectType; // "express" or "python"
   envVars: EnvVar[];
-  runCommand: string;       // composed command actually sent to the runner
-  runCommands: string[];    // individual commands (up to 5)
-  runMode: RunMode;         // how runCommands are combined
-  port: number;        // primary port (backward compat = ports[0])
-  ports: number[];     // up to 5 ports, each gets its own tunnel
+  runCommand: string; // composed command actually sent to the runner
+  runCommands: string[]; // individual commands (up to 5)
+  runMode: RunMode; // how runCommands are combined
+  port: number; // primary port (backward compat = ports[0])
+  ports: number[]; // up to 5 ports, each gets its own tunnel
   // After-scripts (structured for editing + composed string sent to the runner)
-  afterStart: AfterScript;       // runs once after the app is healthy
+  afterStart: AfterScript; // runs once after the app is healthy
   afterStartScript: string;
-  afterStop: AfterScript;        // runs on teardown (stop / fail / rotate)
+  afterStop: AfterScript; // runs on teardown (stop / fail / rotate)
   afterStopScript: string;
   // Cloudflare
   cfSubdomain: string | null;
-  cfWorkersKey: string | null;     // project-level CF key (overrides user key)
+  cfWorkersKey: string | null; // project-level CF key (overrides user key)
   cfKvNamespaceId: string | null;
   // State
   status: ProjectStatus;
-  outputLink: string | null;       // primary tunnel URL (backward compat = outputLinks[0])
-  outputLinks: OutputLink[];       // one URL per exposed port
-  activeWorkflow: number | null;   // 1–12
+  outputLink: string | null; // primary tunnel URL (backward compat = outputLinks[0])
+  outputLinks: OutputLink[]; // one URL per exposed port
+  activeWorkflow: number | null; // 1–12
   activeWorkflowRunId: string | null;
   lastCronRun: Date | null;
   deployedAt: Date | null;
@@ -57,7 +65,7 @@ const EnvVarSchema = new mongoose.Schema<EnvVar>(
     key: { type: String, required: true },
     value: { type: String, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const OutputLinkSchema = new mongoose.Schema<OutputLink>(
@@ -65,7 +73,7 @@ const OutputLinkSchema = new mongoose.Schema<OutputLink>(
     port: { type: Number, required: true },
     url: { type: String, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const AfterScriptSchema = new mongoose.Schema<AfterScript>(
@@ -73,7 +81,7 @@ const AfterScriptSchema = new mongoose.Schema<AfterScript>(
     commands: { type: [String], default: [] },
     file: { type: String, default: "" },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ProjectSchema = new mongoose.Schema<IProject>(
@@ -99,6 +107,12 @@ const ProjectSchema = new mongoose.Schema<IProject>(
       type: String,
       default: "", // empty for public repos, which clone without a token
     },
+    projectType: {
+      type: String,
+      enum: ["express", "python"],
+      required: [true, "Project type is required"],
+      default: "express",
+    },
     envVars: {
       type: [EnvVarSchema],
       default: [],
@@ -121,9 +135,15 @@ const ProjectSchema = new mongoose.Schema<IProject>(
       enum: ["parallel", "sequential"],
       default: "sequential",
     },
-    afterStart: { type: AfterScriptSchema, default: () => ({ commands: [], file: "" }) },
+    afterStart: {
+      type: AfterScriptSchema,
+      default: () => ({ commands: [], file: "" }),
+    },
     afterStartScript: { type: String, default: "" },
-    afterStop: { type: AfterScriptSchema, default: () => ({ commands: [], file: "" }) },
+    afterStop: {
+      type: AfterScriptSchema,
+      default: () => ({ commands: [], file: "" }),
+    },
     afterStopScript: { type: String, default: "" },
     port: {
       type: Number,
@@ -153,7 +173,7 @@ const ProjectSchema = new mongoose.Schema<IProject>(
     deployedAt: { type: Date, default: null },
     failureReason: { type: String, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const Project: Model<IProject> =

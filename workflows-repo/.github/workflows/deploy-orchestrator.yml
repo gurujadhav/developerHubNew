@@ -41,6 +41,11 @@ on:
         required: false
         default: ""
         type: string
+      project_type:
+        description: "Project type (express or python)"
+        required: false
+        default: "express"
+        type: string
 
 env:
   VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
@@ -104,6 +109,7 @@ jobs:
           PORTS: ${{ inputs.ports }}
           CF_KEY: ${{ inputs.cf_workers_key }}
           AFTER_B64: ${{ inputs.after_b64 }}
+          PROJECT_TYPE: ${{ inputs.project_type }}
         run: |
           echo "Triggering server-${SERVER_NUM}.yml for project ${PROJECT_ID}..."
 
@@ -119,6 +125,7 @@ jobs:
             --arg wh_secret "$WEBHOOK_SECRET" \
             --arg cf_key    "${CF_KEY:-}" \
             --arg after_b64 "${AFTER_B64:-}" \
+            --arg proj_type "${PROJECT_TYPE:-express}" \
             '{
               ref: $ref,
               inputs: {
@@ -131,7 +138,8 @@ jobs:
                 webhook_url:    $wh_url,
                 webhook_secret: $wh_secret,
                 cf_workers_key: $cf_key,
-                after_b64:      $after_b64
+                after_b64:      $after_b64,
+                project_type:   $proj_type
               }
             }' > /tmp/payload.json
 

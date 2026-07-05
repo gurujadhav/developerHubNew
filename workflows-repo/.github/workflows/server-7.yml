@@ -49,6 +49,11 @@ on:
         required: false
         default: ""
         type: string
+      project_type:
+        description: "Project type (express or python)"
+        required: false
+        default: "express"
+        type: string
 
 jobs:
   serve:
@@ -66,14 +71,23 @@ jobs:
           sudo apt-get update -q && sudo apt-get install -y cloudflared
           cloudflared --version
 
-      # --- 2. Node.js ---
+      # --- 2a. Setup Node.js (for Express projects) ---
       - name: Setup Node.js 22
+        if: inputs.project_type == 'express' || inputs.project_type == ''
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      # --- 3. pnpm ---
+      # --- 2b. Setup Python (for Python projects) ---
+      - name: Setup Python 3.11
+        if: inputs.project_type == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      # --- 3. pnpm (for Express projects) ---
       - name: Setup pnpm
+        if: inputs.project_type == 'express' || inputs.project_type == ''
         uses: pnpm/action-setup@v4
         with:
           version: latest
@@ -96,14 +110,25 @@ jobs:
           fi
           echo "Cloned $REPO_URL"
 
-      # --- 5. Restore node_modules cache ---
+      # --- 5a. Restore node_modules cache (Express) ---
       - name: Restore node_modules cache
+        if: inputs.project_type == 'express' || inputs.project_type == ''
         id: nm-cache
         uses: actions/cache@v4
         with:
           path: project/node_modules
           key: nm-${{ inputs.project_id }}-${{ hashFiles('project/pnpm-lock.yaml', 'project/package-lock.json', 'project/yarn.lock') }}
           restore-keys: nm-${{ inputs.project_id }}-
+
+      # --- 5b. Setup Python virtual environment (Python) ---
+      - name: Setup Python virtual environment
+        if: inputs.project_type == 'python'
+        working-directory: project
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          echo "VIRTUAL_ENV=${PWD}/venv" >> $GITHUB_ENV
+          echo "${PWD}/venv/bin" >> $GITHUB_PATH
 
       # --- 6. Write .env file ---
       - name: Write .env file
@@ -116,8 +141,9 @@ jobs:
           [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
           echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
 
-      # --- 7. Install dependencies ---
-      - name: Install dependencies
+      # --- 7a. Install dependencies (Express) ---
+      - name: Install dependencies (Express)
+        if: inputs.project_type == 'express' || inputs.project_type == ''
         working-directory: project
         run: |
           if [ -f pnpm-lock.yaml ]; then
@@ -127,6 +153,17 @@ jobs:
           else
             pnpm install
           fi
+
+      # --- 7b. Install dependencies (Python) ---
+      - name: Install dependencies (Python)
+        if: inputs.project_type == 'python'
+        working-directory: project
+        run: |
+          source venv/bin/activate
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          echo "Python dependencies installed"
 
       # --- 7b. Decode after-scripts ---
       - name: Decode after-scripts
@@ -261,7 +298,7 @@ jobs:
             --arg pid "$PROJECT_ID" \
             --arg url "$TUNNEL_URL" \
             --argjson tunnels "$TUNNELS_JSON" \
-            --arg wf "7" \
+            --arg wf "1" \
             --arg rid "$RUN_ID" \
             '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
           curl -fsSX POST "$WEBHOOK_URL" \
@@ -296,7 +333,7 @@ jobs:
             purl=$(echo "$tj" | jq -r '.[0].url')
             local payload
             payload=$(jq -n --arg pid "$PROJECT_ID" --arg url "$purl" --argjson tunnels "$tj" \
-              --arg wf "7" --arg rid "$RUN_ID" \
+              --arg wf "1" --arg rid "$RUN_ID" \
               '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
             curl -fsSX POST "$WEBHOOK_URL" -H "Content-Type: application/json" \
               -H "x-webhook-secret: $WEBHOOK_SECRET" --data-binary "$payload" || true
@@ -365,6 +402,6 @@ jobs:
             -d "{
               \"project_id\": \"$PROJECT_ID\",
               \"status\": \"$STATUS\",
-              \"workflow_number\": \"7\",
+              \"workflow_number\": \"1\",
               \"run_id\": \"$RUN_ID\"
             }" || true

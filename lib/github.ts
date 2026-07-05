@@ -113,6 +113,7 @@ export async function triggerDeployWorkflow(params: {
   cfWorkersKey?: string;
   afterStart?: string;
   afterStop?: string;
+  projectType?: string;
 }) {
   const response = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${DEPLOY_WORKFLOW_FILE}/dispatches`,
@@ -135,6 +136,7 @@ export async function triggerDeployWorkflow(params: {
           ports: params.ports.join(","),
           cf_workers_key: params.cfWorkersKey ?? "",
           after_b64: afterScriptsToBase64(params.afterStart ?? "", params.afterStop ?? ""),
+          project_type: params.projectType ?? "express",
         },
       }),
     }

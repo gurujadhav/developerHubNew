@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { name, repoUrl, pat, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId } = body;
+    const { name, repoUrl, pat, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId, projectType } = body;
 
     // Trim the PAT — a stray trailing newline (common when pasting tokens)
     // corrupts the git clone URL and downstream auth headers.
@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
     const afterStop = normalizeAfterScript(body.afterStop);
     const afterStartScript = composeAfterScript(afterStart);
     const afterStopScript = composeAfterScript(afterStop);
+
+    // Validate projectType
+    const validProjectTypes = ["express", "python"];
+    const finalProjectType = validProjectTypes.includes(projectType) ? projectType : "express";
 
     if (!name || !repoUrl) {
       return NextResponse.json(
@@ -120,6 +124,7 @@ export async function POST(request: NextRequest) {
       name: name.trim(),
       repoUrl: repoUrl.trim(),
       pat: cleanPat,
+      projectType: finalProjectType,
       envVars: envVars ?? [],
       runCommand: composedCommand,
       runCommands,
@@ -150,6 +155,7 @@ export async function POST(request: NextRequest) {
         cfWorkersKey: effectiveCfKey,
         afterStart: afterStartScript,
         afterStop: afterStopScript,
+        projectType: finalProjectType,
       });
     } catch (ghError) {
       console.error("Failed to trigger deployment workflow:", ghError);
@@ -169,6 +175,7 @@ export async function POST(request: NextRequest) {
           id: project._id.toString(),
           name: project.name,
           repoUrl: project.repoUrl,
+          projectType: project.projectType,
           status: project.status,
           runCommand: project.runCommand,
           port: project.port,

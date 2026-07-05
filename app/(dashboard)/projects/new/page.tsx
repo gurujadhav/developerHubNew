@@ -17,6 +17,7 @@ import {
   Key,
   Cloud,
   Zap,
+  Code2,
 } from "lucide-react";
 import { parseEnvFile } from "@/lib/envParse";
 import AfterScriptEditor, {
@@ -24,7 +25,7 @@ import AfterScriptEditor, {
   emptyAfterScript,
 } from "@/components/AfterScriptEditor";
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
 interface EnvVar {
   key: string;
@@ -34,7 +35,10 @@ interface EnvVar {
 
 type RunMode = "sequential" | "parallel";
 
+type ProjectType = "express" | "python";
+
 interface FormData {
+  projectType: ProjectType;
   name: string;
   repoUrl: string;
   pat: string;
@@ -51,11 +55,12 @@ interface FormData {
 const MAX_LIST = 5;
 
 const STEPS = [
-  { num: 1 as Step, label: "Basics" },
-  { num: 2 as Step, label: "Repository" },
-  { num: 3 as Step, label: "Run command" },
-  { num: 4 as Step, label: "Environment" },
-  { num: 5 as Step, label: "Deploy" },
+  { num: 1 as Step, label: "Project Type" },
+  { num: 2 as Step, label: "Basics" },
+  { num: 3 as Step, label: "Repository" },
+  { num: 4 as Step, label: "Run command" },
+  { num: 5 as Step, label: "Environment" },
+  { num: 6 as Step, label: "Deploy" },
 ];
 
 export default function NewProjectPage() {
@@ -66,6 +71,7 @@ export default function NewProjectPage() {
   const envFileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<FormData>({
+    projectType: "express",
     name: "",
     repoUrl: "",
     pat: "",
@@ -162,15 +168,17 @@ export default function NewProjectPage() {
   const canNext = () => {
     switch (step) {
       case 1:
-        return form.name.trim().length >= 1;
+        return form.projectType !== "";
       case 2:
-        return form.repoUrl.trim().length > 0 && patResult?.valid === true;
+        return form.name.trim().length >= 1;
       case 3:
+        return form.repoUrl.trim().length > 0 && patResult?.valid === true;
+      case 4:
         return (
           form.runCommands.some((c) => c.trim().length > 0) &&
           form.ports.some((p) => Number(p) > 0)
         );
-      case 4:
+      case 5:
         return true; // env vars optional
       default:
         return true;
@@ -185,6 +193,7 @@ export default function NewProjectPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          projectType: form.projectType,
           name: form.name,
           repoUrl: form.repoUrl,
           pat: form.pat,
@@ -222,7 +231,7 @@ export default function NewProjectPage() {
         </button>
         <div>
           <h1 className="font-display font-bold text-2xl text-white">New Project</h1>
-          <p className="text-slate-500 text-sm">Deploy a Next.js app from GitHub</p>
+          <p className="text-slate-500 text-sm">Deploy an Express or Python app from GitHub</p>
         </div>
       </div>
 
@@ -263,8 +272,67 @@ export default function NewProjectPage() {
 
       {/* Step content */}
       <div className="card p-6 animate-slide-up">
-        {/* Step 1: Project name */}
+        {/* Step 1: Project type */}
         {step === 1 && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Code2 size={18} className="text-gold-500" />
+              <h2 className="font-display font-semibold text-lg text-white">Select project type</h2>
+            </div>
+            <p className="text-slate-400 text-sm">What type of application are you deploying?</p>
+            <div className="space-y-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, projectType: "express" }))}
+                className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                  form.projectType === "express"
+                    ? "border-gold-500/50 bg-gold-500/10"
+                    : "border-navy-600 hover:border-navy-500"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                    form.projectType === "express"
+                      ? "border-gold-500 bg-gold-500"
+                      : "border-slate-500"
+                  }`}>
+                    {form.projectType === "express" && <Check size={14} className="text-navy-950" />}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Express.js / Node.js</p>
+                    <p className="text-xs text-slate-500 mt-0.5">JavaScript/TypeScript web applications</p>
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, projectType: "python" }))}
+                className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                  form.projectType === "python"
+                    ? "border-gold-500/50 bg-gold-500/10"
+                    : "border-navy-600 hover:border-navy-500"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                    form.projectType === "python"
+                      ? "border-gold-500 bg-gold-500"
+                      : "border-slate-500"
+                  }`}>
+                    {form.projectType === "python" && <Check size={14} className="text-navy-950" />}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Python</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Flask, FastAPI, Django, or other Python apps</p>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Project name */}
+        {step === 2 && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
               <Zap size={18} className="text-gold-500" />
@@ -288,8 +356,8 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* Step 2: Repository + PAT */}
-        {step === 2 && (
+        {/* Step 3: Repository + PAT */}
+        {step === 3 && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
               <Github size={18} className="text-gold-500" />
@@ -381,8 +449,8 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* Step 3: Run commands + ports */}
-        {step === 3 && (
+        {/* Step 4: Run commands + ports */}
+        {step === 4 && (
           <div className="space-y-5">
             <div className="flex items-center gap-2 mb-2">
               <Terminal size={18} className="text-gold-500" />
@@ -501,8 +569,8 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* Step 4: Env vars + CF keys */}
-        {step === 4 && (
+        {/* Step 5: Env vars + CF keys */}
+        {step === 5 && (
           <div className="space-y-5">
             <div className="flex items-center gap-2 mb-2">
               <Cloud size={18} className="text-gold-500" />
@@ -641,8 +709,8 @@ export default function NewProjectPage() {
           </div>
         )}
 
-        {/* Step 5: Review & deploy */}
-        {step === 5 && (
+        {/* Step 6: Review & deploy */}
+        {step === 6 && (
           <div className="space-y-5">
             <div className="flex items-center gap-2 mb-2">
               <Zap size={18} className="text-gold-500" />
@@ -714,7 +782,7 @@ export default function NewProjectPage() {
       </div>
 
       {/* Navigation */}
-      {step < 5 && (
+      {step < 6 && (
         <div className="flex justify-between">
           <button
             onClick={() => setStep((s) => (s > 1 ? ((s - 1) as Step) : s))}

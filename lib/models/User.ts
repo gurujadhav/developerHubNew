@@ -15,7 +15,7 @@ export interface IUser extends Document {
   updatedAt: Date;
 }
 
-export const DEFAULT_MAX_PROJECTS = 3;
+export const DEFAULT_MAX_PROJECTS = 0;
 
 const UserSchema = new mongoose.Schema<IUser>(
   {

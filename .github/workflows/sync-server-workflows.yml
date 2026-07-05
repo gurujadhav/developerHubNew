@@ -79,7 +79,8 @@ jobs:
             echo "No workflow changes to sync — target is already up to date."
             exit 0
           fi
-
+          git config global.user "developerHub"
+          git config global.email "guru.jadhav.2004+developerHub1@gmail.com"
           git commit -m "chore: sync workflows from deployment-platform@${GITHUB_SHA::7}"
           git push origin "${TARGET_BRANCH}"
           echo "Workflows synced to ${TARGET_OWNER}/${TARGET_REPO}."
