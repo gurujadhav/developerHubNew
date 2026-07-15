@@ -35,7 +35,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
   const body = await request.json();
-  const allowedUpdates = ["name", "cfWorkersKey", "cfKvNamespaceId", "envVars"];
+  const allowedUpdates = ["name", "branch", "cfWorkersKey", "cfKvNamespaceId", "envVars"];
   for (const key of allowedUpdates) {
     if (key in body) (project as any)[key] = body[key];
   }

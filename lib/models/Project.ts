@@ -31,6 +31,7 @@ export interface IProject extends Document {
   name: string;
   repoUrl: string;
   pat: string;
+  branch: string;
   projectType: ProjectType; // "express" or "python"
   envVars: EnvVar[];
   runCommand: string; // composed command actually sent to the runner
@@ -106,6 +107,11 @@ const ProjectSchema = new mongoose.Schema<IProject>(
     pat: {
       type: String,
       default: "", // empty for public repos, which clone without a token
+    },
+    branch: {
+      type: String,
+      default: "main",
+      trim: true,
     },
     projectType: {
       type: String,

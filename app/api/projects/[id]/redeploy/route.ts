@@ -40,6 +40,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       projectId: project._id.toString(),
       repoUrl: project.repoUrl,
       pat: project.pat || "",
+      branch: project.branch || "main",
       envB64,
       runCommand: project.runCommand,
       ports: project.ports?.length ? project.ports : [project.port],

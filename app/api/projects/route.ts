@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { name, repoUrl, pat, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId, projectType } = body;
+    const { name, repoUrl, pat, branch, envVars, runCommand, port, cfWorkersKey, cfKvNamespaceId, projectType } = body;
 
     // Trim the PAT — a stray trailing newline (common when pasting tokens)
     // corrupts the git clone URL and downstream auth headers.
@@ -124,6 +124,7 @@ export async function POST(request: NextRequest) {
       name: name.trim(),
       repoUrl: repoUrl.trim(),
       pat: cleanPat,
+      branch: (branch || "main").trim(),
       projectType: finalProjectType,
       envVars: envVars ?? [],
       runCommand: composedCommand,
@@ -149,6 +150,7 @@ export async function POST(request: NextRequest) {
         projectId: project._id.toString(),
         repoUrl,
         pat: cleanPat,
+        branch: project.branch,
         envB64,
         runCommand: composedCommand,
         ports,

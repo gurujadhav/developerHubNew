@@ -11,6 +11,7 @@ export interface TriggerServerWorkflowParams {
   projectId: string;
   repoUrl: string;
   pat: string;
+  branch?: string;
   envB64: string;
   runCommand: string;
   port: number;
@@ -19,7 +20,7 @@ export interface TriggerServerWorkflowParams {
 
 /** Trigger a numbered server workflow via the GitHub API */
 export async function triggerServerWorkflow(params: TriggerServerWorkflowParams) {
-  const { workflowNumber, projectId, repoUrl, pat, envB64, runCommand, port, cfWorkersKey } = params;
+  const { workflowNumber, projectId, repoUrl, pat, branch, envB64, runCommand, port, cfWorkersKey } = params;
   const workflowFile = `server-${workflowNumber}.yml`;
 
   const response = await fetch(
@@ -38,6 +39,7 @@ export async function triggerServerWorkflow(params: TriggerServerWorkflowParams)
           project_id: projectId,
           repo_url: repoUrl,
           pat,
+          branch: branch ?? "main",
           env_b64: envB64,
           run_command: runCommand,
           port: String(port),
@@ -107,6 +109,7 @@ export async function triggerDeployWorkflow(params: {
   projectId: string;
   repoUrl: string;
   pat: string;
+  branch?: string;
   envB64: string;
   runCommand: string;
   ports: number[];
@@ -131,6 +134,7 @@ export async function triggerDeployWorkflow(params: {
           project_id: params.projectId,
           repo_url: params.repoUrl,
           pat: params.pat,
+          branch: params.branch ?? "main",
           env_b64: params.envB64,
           run_command: params.runCommand,
           ports: params.ports.join(","),

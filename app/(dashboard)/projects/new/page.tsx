@@ -42,6 +42,7 @@ interface FormData {
   name: string;
   repoUrl: string;
   pat: string;
+  branch: string;
   runCommands: string[];
   runMode: RunMode;
   ports: string[];
@@ -75,6 +76,7 @@ export default function NewProjectPage() {
     name: "",
     repoUrl: "",
     pat: "",
+    branch: "main",
     runCommands: ["pnpm dev"],
     runMode: "sequential",
     ports: ["3000"],
@@ -168,7 +170,7 @@ export default function NewProjectPage() {
   const canNext = () => {
     switch (step) {
       case 1:
-        return form.projectType !== "";
+        return !!form.projectType;
       case 2:
         return form.name.trim().length >= 1;
       case 3:
@@ -197,6 +199,7 @@ export default function NewProjectPage() {
           name: form.name,
           repoUrl: form.repoUrl,
           pat: form.pat,
+          branch: form.branch || "main",
           runCommands: form.runCommands.map((c) => c.trim()).filter(Boolean),
           runMode: form.runMode,
           ports: form.ports.map((p) => Number(p)).filter((p) => p > 0),
@@ -392,6 +395,25 @@ export default function NewProjectPage() {
               <p className="text-xs text-slate-600 mt-1.5">
                 Public repos clone without a token. For private repos, use a PAT with{" "}
                 <code className="text-gold-500">repo</code> scope.
+              </p>
+            </div>
+
+            <div>
+              <label className="input-label">
+                Branch to deploy from{" "}
+                <span className="text-slate-600 font-normal normal-case">
+                  (optional)
+                </span>
+              </label>
+              <input
+                type="text"
+                className="input font-mono"
+                placeholder="main"
+                value={form.branch}
+                onChange={(e) => update("branch", e.target.value)}
+              />
+              <p className="text-xs text-slate-600 mt-1.5">
+                The Git branch to clone and deploy. Defaults to <code className="text-gold-500">main</code>.
               </p>
             </div>
 

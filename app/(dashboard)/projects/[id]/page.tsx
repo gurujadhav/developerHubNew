@@ -29,6 +29,7 @@ interface Project {
   _id: string;
   name: string;
   repoUrl: string;
+  branch?: string;
   runCommand: string;
   runCommands?: string[];
   runMode?: RunMode;
@@ -57,6 +58,7 @@ interface EnvRow {
 
 interface EditForm {
   name: string;
+  branch: string;
   runCommands: string[];
   runMode: RunMode;
   ports: string[];
@@ -164,6 +166,7 @@ export default function ProjectPage() {
     setSaveError("");
     setForm({
       name: project.name,
+      branch: project.branch || "main",
       runCommands:
         project.runCommands?.length ? project.runCommands : [project.runCommand || "pnpm dev"],
       runMode: project.runMode ?? "sequential",
@@ -242,6 +245,7 @@ export default function ProjectPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name.trim(),
+          branch: form.branch.trim() || "main",
           runCommands: form.runCommands.map((c) => c.trim()).filter(Boolean),
           runMode: form.runMode,
           ports: form.ports.map((p) => Number(p)).filter((p) => p > 0),
@@ -296,9 +300,14 @@ export default function ProjectPage() {
               <h1 className="font-display font-bold text-2xl text-white">{project.name}</h1>
               <StatusBadge status={project.status} />
             </div>
-            <p className="text-slate-500 text-sm mt-1 font-mono">
-              {project.repoUrl.replace("https://github.com/", "github.com/")}
-            </p>
+            <div className="flex items-center gap-2 mt-1 text-slate-500 text-sm font-mono flex-wrap">
+              <span>{project.repoUrl.replace("https://github.com/", "github.com/")}</span>
+              <span className="text-slate-700">•</span>
+              <span className="flex items-center gap-1">
+                <GitBranch size={14} />
+                <span>{project.branch || "main"}</span>
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -420,6 +429,16 @@ export default function ProjectPage() {
               value={form.name}
               maxLength={60}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label className="input-label">Branch to deploy from</label>
+            <input
+              className="input font-mono"
+              value={form.branch}
+              placeholder="main"
+              onChange={(e) => setForm({ ...form, branch: e.target.value })}
             />
           </div>
 

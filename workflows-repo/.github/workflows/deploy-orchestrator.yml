@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      branch:
+        description: "Branch to deploy from"
+        required: false
+        default: "main"
+        type: string
       env_b64:
         description: "Base64-encoded .env content"
         required: false
@@ -104,6 +109,7 @@ jobs:
           PROJECT_ID: ${{ inputs.project_id }}
           REPO_URL: ${{ inputs.repo_url }}
           PAT: ${{ inputs.pat }}
+          BRANCH: ${{ inputs.branch }}
           ENV_B64: ${{ inputs.env_b64 }}
           RUN_CMD: ${{ inputs.run_command }}
           PORTS: ${{ inputs.ports }}
@@ -118,6 +124,7 @@ jobs:
             --arg pid       "$PROJECT_ID" \
             --arg repo_url  "$REPO_URL" \
             --arg pat       "$PAT" \
+            --arg branch    "$BRANCH" \
             --arg env_b64   "$ENV_B64" \
             --arg run_cmd   "$RUN_CMD" \
             --arg ports     "$PORTS" \
@@ -132,6 +139,7 @@ jobs:
                 project_id:     $pid,
                 repo_url:       $repo_url,
                 pat:            $pat,
+                branch:         $branch,
                 env_b64:        $env_b64,
                 run_command:    $run_cmd,
                 ports:          $ports,

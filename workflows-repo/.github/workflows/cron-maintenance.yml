@@ -82,6 +82,7 @@ jobs:
                   continue
 
               pat        = full.get("pat", "")
+              branch     = full.get("branch", "main") or "main"
               run_cmd    = full.get("runCommand", "pnpm dev")
               ports_list = full.get("ports") or [full.get("port", 3000)]
               ports      = ",".join(str(p) for p in ports_list)
@@ -105,6 +106,7 @@ jobs:
                       "project_id":     pid,
                       "repo_url":       repo_url,
                       "pat":            pat,
+                      "branch":         branch,
                       "env_b64":        env_b64,
                       "run_command":    run_cmd,
                       "ports":          ports,

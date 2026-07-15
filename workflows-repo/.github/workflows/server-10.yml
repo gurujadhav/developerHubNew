@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      branch:
+        description: "Git branch to clone"
+        required: false
+        default: "main"
+        type: string
       run_command:
         description: "Command to start the app (composed by the platform)"
         required: false
@@ -59,6 +64,20 @@ jobs:
   serve:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: neondb_owner
+          POSTGRES_PASSWORD: npg_Q9mFPWfAVo7b
+          POSTGRES_DB: neondb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       # --- 1. Install cloudflared ---
@@ -70,6 +89,27 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/cloudflared.list
           sudo apt-get update -q && sudo apt-get install -y cloudflared
           cloudflared --version
+
+      # --- 1b. Restore DB Dump ---
+      - name: Restore DB Dump
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pg_dump
+          key: pg-dump-${{ inputs.project_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pg-dump-${{ inputs.project_id }}-
+
+      # --- 1c. Restore Postgres Database ---
+      - name: Restore Postgres Database
+        run: |
+          if [ -f /tmp/pg_dump/db.dump ]; then
+            echo "Restoring PostgreSQL database..."
+            pg_restore -h localhost -U neondb_owner -d neondb -p 5432 -v --clean --no-owner --no-privileges /tmp/pg_dump/db.dump || true
+          else
+            echo "No database dump found to restore."
+          fi
+        env:
+          PGPASSWORD: npg_Q9mFPWfAVo7b
 
       # --- 2a. Setup Node.js (for Express projects) ---
       - name: Setup Node.js 22
@@ -98,17 +138,22 @@ jobs:
         env:
           PAT: ${{ inputs.pat }}
           REPO_URL: ${{ inputs.repo_url }}
+          BRANCH: ${{ inputs.branch }}
         run: |
           # Trim stray whitespace/newlines a pasted PAT may carry, then embed it
           # only when present (public repos clone without one).
           PAT="$(printf '%s' "$PAT" | tr -d '[:space:]')"
           REPO_CLEAN=$(echo "$REPO_URL" | sed 's|https://||')
-          if [ -n "$PAT" ]; then
-            git clone --depth 1 "https://${PAT}@${REPO_CLEAN}" project
-          else
-            git clone --depth 1 "https://${REPO_CLEAN}" project
+          BRANCH_CLEAN="$(printf '%s' "$BRANCH" | tr -d '[:space:]')"
+          if [ -z "$BRANCH_CLEAN" ]; then
+            BRANCH_CLEAN="main"
           fi
-          echo "Cloned $REPO_URL"
+          if [ -n "$PAT" ]; then
+            git clone --branch "$BRANCH_CLEAN" --depth 1 "https://${PAT}@${REPO_CLEAN}" project
+          else
+            git clone --branch "$BRANCH_CLEAN" --depth 1 "https://${REPO_CLEAN}" project
+          fi
+          echo "Cloned $REPO_URL branch $BRANCH_CLEAN"
 
       # --- 5a. Restore node_modules cache (Express) ---
       - name: Restore node_modules cache
@@ -140,6 +185,19 @@ jobs:
           # Ensure a trailing newline so the final variable is well-formed.
           [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
           echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
+
+      # --- 6b. Append Postgres environment variables to .env ---
+      - name: Append Postgres variables to .env
+        run: |
+          mkdir -p project
+          touch project/.env
+          echo "" >> project/.env
+          echo "POSTGRES_USER=neondb_owner" >> project/.env
+          echo "POSTGRES_PASSWORD=npg_Q9mFPWfAVo7b" >> project/.env
+          echo "POSTGRES_DB=neondb" >> project/.env
+          echo "PG_PORT=5432" >> project/.env
+          echo "POSTGRES_HOST=localhost" >> project/.env
+          echo "DATABASE_URL=postgresql://neondb_owner:npg_Q9mFPWfAVo7b@localhost:5432/neondb" >> project/.env
 
       # --- 7a. Install dependencies (Express) ---
       - name: Install dependencies (Express)
@@ -298,7 +356,7 @@ jobs:
             --arg pid "$PROJECT_ID" \
             --arg url "$TUNNEL_URL" \
             --argjson tunnels "$TUNNELS_JSON" \
-            --arg wf "1" \
+            --arg wf "10" \
             --arg rid "$RUN_ID" \
             '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
           curl -fsSX POST "$WEBHOOK_URL" \
@@ -333,7 +391,7 @@ jobs:
             purl=$(echo "$tj" | jq -r '.[0].url')
             local payload
             payload=$(jq -n --arg pid "$PROJECT_ID" --arg url "$purl" --argjson tunnels "$tj" \
-              --arg wf "1" --arg rid "$RUN_ID" \
+              --arg wf "10" --arg rid "$RUN_ID" \
               '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
             curl -fsSX POST "$WEBHOOK_URL" -H "Content-Type: application/json" \
               -H "x-webhook-secret: $WEBHOOK_SECRET" --data-binary "$payload" || true
@@ -383,6 +441,24 @@ jobs:
         run: |
           echo "Running after-stop script..."
           sh -c "$AFTER_STOP" || true
+
+      # --- 12c. Dump Postgres database ---
+      - name: Dump Postgres database
+        if: always()
+        run: |
+          echo "Dumping PostgreSQL database..."
+          mkdir -p /tmp/pg_dump
+          pg_dump -h localhost -U neondb_owner -d neondb -p 5432 -F c -b -v -f /tmp/pg_dump/db.dump || true
+        env:
+          PGPASSWORD: npg_Q9mFPWfAVo7b
+
+      # --- 12d. Save DB Dump Cache ---
+      - name: Save DB Dump Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/pg_dump
+          key: pg-dump-${{ inputs.project_id }}-${{ github.run_id }}-${{ github.run_attempt }}
       # --- 13. Notify Vercel app - stopped (always runs) ---
       - name: Notify webhook - stopped
         if: always()
@@ -402,6 +478,6 @@ jobs:
             -d "{
               \"project_id\": \"$PROJECT_ID\",
               \"status\": \"$STATUS\",
-              \"workflow_number\": \"1\",
+              \"workflow_number\": \"10\",
               \"run_id\": \"$RUN_ID\"
             }" || true
