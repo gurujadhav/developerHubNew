@@ -281,7 +281,7 @@ jobs:
         run: |
           echo "Running after-start script..."
           sh -c "$AFTER_START"
-      # --- 9. Start Cloudflare tunnels (one per port) ---
+      # --- 9. Start Cloudflare tunnels (one per port) and public DB tunnel ---
       - name: Start Cloudflare quick tunnels
         run: |
           IFS=',' read -ra PORT_ARR <<< "$PORTS"
@@ -314,6 +314,31 @@ jobs:
             echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
             TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
           done
+
+          echo "Starting public database tunnel..."
+          wget -qO- https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          sudo mv ./bore /usr/local/bin/bore
+          chmod +x /usr/local/bin/bore
+          logf="/tmp/tunnel_5432.log"
+          nohup bore local 5432 --to bore.pub > "$logf" 2>&1 &
+          tpid=$!
+          
+          db_addr=""
+          for i in $(seq 1 30); do
+            db_addr=$(grep -o 'bore.pub:[0-9]*' "$logf" | head -1 || true)
+            [ -n "$db_addr" ] && break
+            sleep 2
+          done
+          
+          if [ -z "$db_addr" ]; then
+            echo "Warning: Could not obtain public tunnel for database"
+            cat "$logf"
+          else
+            db_url="postgresql://neondb_owner:npg_Q9mFPWfAVo7b@${db_addr}/neondb"
+            echo "Database public URL: $db_url"
+            echo "5432=${tpid}=${db_url}" >> /tmp/tunnels.env
+            TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port 5432 --arg url "$db_url" '. + [{port:$port, url:$url}]')
+          fi
 
           PRIMARY_URL=$(echo "$TUNNELS_JSON" | jq -r '.[0].url')
           {
@@ -417,12 +442,24 @@ jobs:
               [ -z "$p" ] && continue
               if ! kill -0 "$tpid" 2>/dev/null; then
                 echo "Tunnel for port $p died - restarting..."
-                logf="/tmp/tunnel_${p}.log"
-                nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
-                tpid=$!
-                sleep 10
-                newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
-                [ -n "$newurl" ] && { url="$newurl"; changed=1; }
+                if [ "$p" = "5432" ]; then
+                  logf="/tmp/tunnel_${p}.log"
+                  nohup bore local 5432 --to bore.pub > "$logf" 2>&1 &
+                  tpid=$!
+                  sleep 10
+                  newport=$(grep -o 'bore.pub:[0-9]*' "$logf" | head -1 || true)
+                  if [ -n "$newport" ]; then
+                    url="postgresql://neondb_owner:npg_Q9mFPWfAVo7b@${newport}/neondb"
+                    changed=1
+                  fi
+                else
+                  logf="/tmp/tunnel_${p}.log"
+                  nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
+                  tpid=$!
+                  sleep 10
+                  newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
+                  [ -n "$newurl" ] && { url="$newurl"; changed=1; }
+                fi
               fi
               echo "${p}=${tpid}=${url}" >> "$tmpfile"
             done < /tmp/tunnels.env
