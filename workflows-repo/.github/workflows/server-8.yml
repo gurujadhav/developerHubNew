@@ -68,11 +68,10 @@ jobs:
       # --- 1. Install cloudflared ---
       - name: Install cloudflared
         run: |
-          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
-            | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared focal main" \
-            | sudo tee /etc/apt/sources.list.d/cloudflared.list
-          sudo apt-get update -q && sudo apt-get install -y cloudflared
+          sudo mkdir -p --mode=0755 /usr/share/keyrings
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | sudo tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+          sudo apt-get update && sudo apt-get install -y cloudflared
           cloudflared --version
 
       # --- 2a. Setup Node.js (for Express projects) ---
@@ -245,6 +244,8 @@ jobs:
           sh -c "$AFTER_START"
       # --- 9. Start Cloudflare tunnels (one per port) and public DB tunnel ---
       - name: Start Cloudflare quick tunnels
+        env:
+          CF_KEY: ${{ inputs.cf_workers_key }}
         run: |
           IFS=',' read -ra PORT_ARR <<< "$PORTS"
           PORT_ARR=("${PORT_ARR[@]:0:5}")
@@ -252,37 +253,47 @@ jobs:
           : > /tmp/tunnels.env          # one "port=pid=url" line per tunnel
           TUNNELS_JSON="[]"
 
-          for p in "${PORT_ARR[@]}"; do
-            [ -z "$p" ] && continue
-            logf="/tmp/tunnel_${p}.log"
-            nohup cloudflared tunnel --url "http://localhost:${p}" \
-              --no-autoupdate > "$logf" 2>&1 &
+          if [ -n "$CF_KEY" ]; then
+            echo "Starting Cloudflare persistent named tunnel..."
+            nohup cloudflared tunnel run --token "$CF_KEY" --no-autoupdate > /tmp/tunnel_named.log 2>&1 &
             tpid=$!
-
-            url=""
-            for i in $(seq 1 30); do
-              url=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
-              [ -n "$url" ] && break
-              sleep 3
+            for p in "${PORT_ARR[@]}"; do
+              [ -z "$p" ] && continue
+              echo "${p}=${tpid}=http://localhost:${p}" >> /tmp/tunnels.env
+              TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "http://localhost:${p}" '. + [{port:$port, url:$url}]')
             done
+          else
+            echo "Starting Cloudflare quick tunnels..."
+            for p in "${PORT_ARR[@]}"; do
+              [ -z "$p" ] && continue
+              logf="/tmp/tunnel_${p}.log"
+              nohup cloudflared tunnel --url "http://localhost:${p}"                 --no-autoupdate > "$logf" 2>&1 &
+              tpid=$!
 
-            if [ -z "$url" ]; then
-              echo "::error::Could not obtain tunnel URL for port $p"
-              cat "$logf"
-              exit 1
-            fi
+              url=""
+              for i in $(seq 1 30); do
+                url=$(grep -oP 'https://[a-zA-Z0-9-]+\.[tT]ry[cC]loudflare\.com' "$logf" | head -1 || true)
+                [ -n "$url" ] && break
+                sleep 3
+              done
 
-            echo "Port $p -> $url"
-            echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
-            TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
-          done
+              if [ -z "$url" ]; then
+                echo "::error::Could not obtain tunnel URL for port $p"
+                cat "$logf"
+                exit 1
+              fi
+
+              echo "Port $p -> $url"
+              echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
+              TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
+            done
+          fi
 
           PRIMARY_URL=$(echo "$TUNNELS_JSON" | jq -r '.[0].url')
           {
             echo "TUNNELS_JSON=$TUNNELS_JSON"
             echo "TUNNEL_URL=$PRIMARY_URL"
           } >> "$GITHUB_ENV"
-
       # --- 10. Write project cache file ---
       - name: Write project cache
         env:
@@ -334,6 +345,7 @@ jobs:
           WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
           PROJECT_ID: ${{ inputs.project_id }}
           RUN_ID: ${{ github.run_id }}
+          CF_KEY: ${{ inputs.cf_workers_key }}
         working-directory: project
         run: |
           PRIMARY_PORT=$(echo "$PORTS" | cut -d',' -f1)
@@ -359,7 +371,7 @@ jobs:
             purl=$(echo "$tj" | jq -r '.[0].url')
             local payload
             payload=$(jq -n --arg pid "$PROJECT_ID" --arg url "$purl" --argjson tunnels "$tj" \
-              --arg wf "8" --arg rid "$RUN_ID" \
+              --arg wf "1" --arg rid "$RUN_ID" \
               '{project_id:$pid, tunnel_url:$url, tunnels:$tunnels, status:"running", workflow_number:$wf, run_id:$rid}')
             curl -fsSX POST "$WEBHOOK_URL" -H "Content-Type: application/json" \
               -H "x-webhook-secret: $WEBHOOK_SECRET" --data-binary "$payload" || true
@@ -385,12 +397,17 @@ jobs:
               [ -z "$p" ] && continue
               if ! kill -0 "$tpid" 2>/dev/null; then
                 echo "Tunnel for port $p died - restarting..."
-                logf="/tmp/tunnel_${p}.log"
-                nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
-                tpid=$!
-                sleep 10
-                newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
-                [ -n "$newurl" ] && { url="$newurl"; changed=1; }
+                if [ -n "$CF_KEY" ]; then
+                  nohup cloudflared tunnel run --token "$CF_KEY" --no-autoupdate > /tmp/tunnel_named.log 2>&1 &
+                  tpid=$!
+                else
+                  logf="/tmp/tunnel_${p}.log"
+                  nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
+                  tpid=$!
+                  sleep 10
+                  newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.[tT]ry[cC]loudflare\.com' "$logf" | head -1 || true)
+                  [ -n "$newurl" ] && { url="$newurl"; changed=1; }
+                fi
               fi
               echo "${p}=${tpid}=${url}" >> "$tmpfile"
             done < /tmp/tunnels.env
@@ -400,9 +417,7 @@ jobs:
               echo "Tunnel URL(s) changed - notifying webhook"
               notify_running "$(rebuild_json)"
             fi
-          done
-
-      # --- 12b. After-stop script (teardown, best-effort) ---
+          done      # --- 12b. After-stop script (teardown, best-effort) ---
       - name: Run after-stop script
         if: always() && env.AFTER_STOP != ''
         working-directory: project
