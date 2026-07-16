@@ -48,6 +48,7 @@ interface Project {
   failureReason: string | null;
   createdAt: string;
   updatedAt: string;
+  portMappings?: Array<{ port: number; domain: string }>;
 }
 
 interface EnvRow {
@@ -65,6 +66,7 @@ interface EditForm {
   envVars: EnvRow[];
   afterStart: AfterScriptValue;
   afterStop: AfterScriptValue;
+  portMappings: Array<{ port: string; domain: string; id: string }>;
 }
 
 const MAX_LIST = 5;
@@ -180,6 +182,11 @@ export default function ProjectPage() {
         commands: project.afterStop?.commands ?? [],
         file: project.afterStop?.file ?? "",
       },
+      portMappings: (project.portMappings ?? []).map((m) => ({
+        port: String(m.port),
+        domain: m.domain,
+        id: rowId(),
+      })),
     });
     setEditing(true);
   };
@@ -254,6 +261,9 @@ export default function ProjectPage() {
             .map(({ key, value }) => ({ key: key.trim(), value })),
           afterStart: form.afterStart,
           afterStop: form.afterStop,
+          portMappings: form.portMappings
+            .filter((m) => m.domain.trim() && Number(m.port) > 0)
+            .map((m) => ({ port: Number(m.port), domain: m.domain.trim() })),
         }),
       });
       if (!res.ok) {
@@ -349,12 +359,8 @@ export default function ProjectPage() {
             {liveLinks.length > 1 ? "Live URLs" : "Live URL"}
           </p>
           {liveLinks.map((link) => {
-            let customDomain = "";
-            if (link.port === 3000) {
-              customDomain = "labs.test.testifysamplee.com";
-            } else if (link.port === 4000) {
-              customDomain = "api.test.testifysamples.com";
-            }
+            const mapping = project.portMappings?.find((m) => m.port === link.port);
+            const customDomain = mapping ? mapping.domain : "";
             return (
               <div key={`${link.port}-${link.url}`} className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -568,6 +574,44 @@ export default function ProjectPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Port mappings (custom domains) */}
+          <div className="space-y-3">
+            <label className="input-label mb-1">Custom domains per port (optional)</label>
+            <p className="text-xs text-slate-500 mb-2">
+              Route a custom domain to each mapped port (e.g. labs.test.testifysamples.com).
+            </p>
+            <div className="space-y-2">
+              {form.ports.map((portStr) => {
+                const portVal = Number(portStr);
+                if (isNaN(portVal) || portVal <= 0) return null;
+                const mapping = form.portMappings.find((m) => Number(m.port) === portVal);
+                const domainVal = mapping ? mapping.domain : "";
+                return (
+                  <div key={portStr} className="flex gap-3 items-center">
+                    <span className="font-mono text-xs text-slate-500 w-20 shrink-0">port {portStr} ➔</span>
+                    <input
+                      type="text"
+                      className="input flex-1 text-xs font-mono"
+                      placeholder="e.g. labs.test.testifysamples.com"
+                      value={domainVal}
+                      onChange={(e) => {
+                        const newDomain = e.target.value.trim();
+                        setForm((f) => {
+                          if (!f) return f;
+                          const filtered = f.portMappings.filter((m) => Number(m.port) !== portVal);
+                          if (newDomain) {
+                            filtered.push({ port: portStr, domain: newDomain, id: rowId() });
+                          }
+                          return { ...f, portMappings: filtered };
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
 

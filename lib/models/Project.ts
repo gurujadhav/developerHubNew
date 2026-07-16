@@ -21,6 +21,11 @@ export interface OutputLink {
   url: string;
 }
 
+export interface PortMapping {
+  port: number;
+  domain: string;
+}
+
 export interface AfterScript {
   commands: string[];
   file: string;
@@ -48,6 +53,7 @@ export interface IProject extends Document {
   cfSubdomain: string | null;
   cfWorkersKey: string | null; // project-level CF key (overrides user key)
   cfKvNamespaceId: string | null;
+  portMappings: PortMapping[];
   // State
   status: ProjectStatus;
   outputLink: string | null; // primary tunnel URL (backward compat = outputLinks[0])
@@ -73,6 +79,14 @@ const OutputLinkSchema = new mongoose.Schema<OutputLink>(
   {
     port: { type: Number, required: true },
     url: { type: String, required: true },
+  },
+  { _id: false },
+);
+
+const PortMappingSchema = new mongoose.Schema<PortMapping>(
+  {
+    port: { type: Number, required: true },
+    domain: { type: String, required: true },
   },
   { _id: false },
 );
@@ -166,6 +180,7 @@ const ProjectSchema = new mongoose.Schema<IProject>(
     cfSubdomain: { type: String, default: null },
     cfWorkersKey: { type: String, default: null },
     cfKvNamespaceId: { type: String, default: null },
+    portMappings: { type: [PortMappingSchema], default: [] },
     status: {
       type: String,
       enum: ["pending", "deploying", "running", "failed", "stopped"],

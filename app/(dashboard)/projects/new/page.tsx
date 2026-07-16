@@ -51,6 +51,7 @@ interface FormData {
   cfKvNamespaceId: string;
   afterStart: AfterScriptValue;
   afterStop: AfterScriptValue;
+  portMappings: Array<{ port: string; domain: string; id: string }>;
 }
 
 const MAX_LIST = 5;
@@ -85,6 +86,7 @@ export default function NewProjectPage() {
     cfKvNamespaceId: "",
     afterStart: emptyAfterScript(),
     afterStop: emptyAfterScript(),
+    portMappings: [],
   });
 
   // Repo / PAT verification state
@@ -206,10 +208,13 @@ export default function NewProjectPage() {
           envVars: form.envVars
             .filter((v) => v.key.trim())
             .map(({ key, value }) => ({ key: key.trim(), value })),
-          cfWorkersKey: form.cfWorkersKey || undefined,
+           cfWorkersKey: form.cfWorkersKey || undefined,
           cfKvNamespaceId: form.cfKvNamespaceId || undefined,
           afterStart: form.afterStart,
           afterStop: form.afterStop,
+          portMappings: (form.portMappings || [])
+            .filter((m) => m.domain.trim() && Number(m.port) > 0)
+            .map((m) => ({ port: Number(m.port), domain: m.domain.trim() })),
         }),
       });
       const data = await res.json();
@@ -587,6 +592,44 @@ export default function NewProjectPage() {
               <p className="text-xs text-slate-600 mt-1.5">
                 Each port gets its own public tunnel URL (max {MAX_LIST}).
               </p>
+            </div>
+
+            {/* Port mappings (custom domains) */}
+            <div className="space-y-3 mt-4">
+              <label className="input-label mb-1">Custom domains per port (optional)</label>
+              <p className="text-xs text-slate-500 mb-2">
+                Route a Cloudflare custom domain to each exposed port (e.g. labs.test.testifysamples.com).
+              </p>
+              <div className="space-y-2">
+                {form.ports.map((portStr) => {
+                  const portVal = Number(portStr);
+                  if (isNaN(portVal) || portVal <= 0) return null;
+                  const mapping = (form.portMappings || []).find((m) => Number(m.port) === portVal);
+                  const domainVal = mapping ? mapping.domain : "";
+                  return (
+                    <div key={portStr} className="flex gap-3 items-center">
+                      <span className="font-mono text-xs text-slate-500 w-20 shrink-0">port {portStr} ➔</span>
+                      <input
+                        type="text"
+                        className="input flex-1 text-xs font-mono"
+                        placeholder="e.g. labs.test.testifysamples.com"
+                        value={domainVal}
+                        onChange={(e) => {
+                          const newDomain = e.target.value.trim();
+                          setForm((f) => {
+                            const mappings = f.portMappings || [];
+                            const filtered = mappings.filter((m) => Number(m.port) !== portVal);
+                            if (newDomain) {
+                              filtered.push({ port: portStr, domain: newDomain, id: Math.random().toString(36).slice(2) });
+                            }
+                            return { ...f, portMappings: filtered };
+                          });
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
