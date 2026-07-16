@@ -64,21 +64,6 @@ jobs:
   serve:
     runs-on: ubuntu-latest
     timeout-minutes: 350
-    services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_USER: neondb_owner
-          POSTGRES_PASSWORD: npg_Q9mFPWfAVo7b
-          POSTGRES_DB: neondb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       # --- 1. Install cloudflared ---
       - name: Install cloudflared
@@ -89,27 +74,6 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/cloudflared.list
           sudo apt-get update -q && sudo apt-get install -y cloudflared
           cloudflared --version
-
-      # --- 1b. Restore DB Dump ---
-      - name: Restore DB Dump
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/pg_dump
-          key: pg-dump-${{ inputs.project_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            pg-dump-${{ inputs.project_id }}-
-
-      # --- 1c. Restore Postgres Database ---
-      - name: Restore Postgres Database
-        run: |
-          if [ -f /tmp/pg_dump/db.dump ]; then
-            echo "Restoring PostgreSQL database..."
-            pg_restore -h localhost -U neondb_owner -d neondb -p 5432 -v --clean --no-owner --no-privileges /tmp/pg_dump/db.dump || true
-          else
-            echo "No database dump found to restore."
-          fi
-        env:
-          PGPASSWORD: npg_Q9mFPWfAVo7b
 
       # --- 2a. Setup Node.js (for Express projects) ---
       - name: Setup Node.js 22
@@ -186,19 +150,6 @@ jobs:
           [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
           echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
 
-      # --- 6b. Append Postgres environment variables to .env ---
-      - name: Append Postgres variables to .env
-        run: |
-          mkdir -p project
-          touch project/.env
-          echo "" >> project/.env
-          echo "POSTGRES_USER=neondb_owner" >> project/.env
-          echo "POSTGRES_PASSWORD=npg_Q9mFPWfAVo7b" >> project/.env
-          echo "POSTGRES_DB=neondb" >> project/.env
-          echo "PG_PORT=5432" >> project/.env
-          echo "POSTGRES_HOST=localhost" >> project/.env
-          echo "DATABASE_URL=postgresql://neondb_owner:npg_Q9mFPWfAVo7b@localhost:5432/neondb" >> project/.env
-
       # --- 7a. Install dependencies (Express) ---
       - name: Install dependencies (Express)
         if: inputs.project_type == 'express' || inputs.project_type == ''
@@ -254,23 +205,34 @@ jobs:
           echo "PORTS=$PORTS" >> "$GITHUB_ENV"
           echo "Ports: ${PORT_ARR[*]} (primary: $PRIMARY_PORT)"
 
+          # Touch the log file first so tail doesn't complain about it not existing
+          touch /tmp/app.log
+          tail -F /tmp/app.log &
+          TAIL_PID=$!
+
           nohup sh -c "$RUN_CMD" > /tmp/app.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
 
-          echo "Waiting for app on primary port $PRIMARY_PORT..."
-          for i in $(seq 1 60); do
+          echo "Waiting for app on primary port $PRIMARY_PORT (timeout: 10m)..."
+          for i in $(seq 1 120); do
             if curl -sf "http://localhost:${PRIMARY_PORT}" > /dev/null 2>&1; then
               echo "App is up after $((i * 5))s"
               APP_READY=true
               break
             fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::App process died during startup"
+              break
+            fi
             sleep 5
           done
 
+          # Stop tailing startup logs
+          kill "$TAIL_PID" 2>/dev/null || true
+
           if [ -z "${APP_READY}" ]; then
-            echo "::error::App did not respond on port $PRIMARY_PORT within 5 minutes"
-            tail -50 /tmp/app.log
+            echo "::error::App did not respond on port $PRIMARY_PORT within 10 minutes"
             exit 1
           fi
 
@@ -314,31 +276,6 @@ jobs:
             echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
             TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
           done
-
-          echo "Starting public database tunnel..."
-          wget -qO- https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          sudo mv ./bore /usr/local/bin/bore
-          chmod +x /usr/local/bin/bore
-          logf="/tmp/tunnel_5432.log"
-          nohup bore local 5432 --to bore.pub > "$logf" 2>&1 &
-          tpid=$!
-          
-          db_addr=""
-          for i in $(seq 1 30); do
-            db_addr=$(grep -o 'bore.pub:[0-9]*' "$logf" | head -1 || true)
-            [ -n "$db_addr" ] && break
-            sleep 2
-          done
-          
-          if [ -z "$db_addr" ]; then
-            echo "Warning: Could not obtain public tunnel for database"
-            cat "$logf"
-          else
-            db_url="postgresql://neondb_owner:npg_Q9mFPWfAVo7b@${db_addr}/neondb"
-            echo "Database public URL: $db_url"
-            echo "5432=${tpid}=${db_url}" >> /tmp/tunnels.env
-            TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port 5432 --arg url "$db_url" '. + [{port:$port, url:$url}]')
-          fi
 
           PRIMARY_URL=$(echo "$TUNNELS_JSON" | jq -r '.[0].url')
           {
@@ -401,6 +338,12 @@ jobs:
         run: |
           PRIMARY_PORT=$(echo "$PORTS" | cut -d',' -f1)
 
+          # Start tailing running logs in background with cleanup on exit
+          touch /tmp/app.log
+          tail -F /tmp/app.log &
+          TAIL_PID=$!
+          trap "kill $TAIL_PID 2>/dev/null || true" EXIT
+
           rebuild_json() {
             local tj="[]"
             while IFS='=' read -r p tpid url; do
@@ -442,24 +385,12 @@ jobs:
               [ -z "$p" ] && continue
               if ! kill -0 "$tpid" 2>/dev/null; then
                 echo "Tunnel for port $p died - restarting..."
-                if [ "$p" = "5432" ]; then
-                  logf="/tmp/tunnel_${p}.log"
-                  nohup bore local 5432 --to bore.pub > "$logf" 2>&1 &
-                  tpid=$!
-                  sleep 10
-                  newport=$(grep -o 'bore.pub:[0-9]*' "$logf" | head -1 || true)
-                  if [ -n "$newport" ]; then
-                    url="postgresql://neondb_owner:npg_Q9mFPWfAVo7b@${newport}/neondb"
-                    changed=1
-                  fi
-                else
-                  logf="/tmp/tunnel_${p}.log"
-                  nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
-                  tpid=$!
-                  sleep 10
-                  newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
-                  [ -n "$newurl" ] && { url="$newurl"; changed=1; }
-                fi
+                logf="/tmp/tunnel_${p}.log"
+                nohup cloudflared tunnel --url "http://localhost:${p}" --no-autoupdate > "$logf" 2>&1 &
+                tpid=$!
+                sleep 10
+                newurl=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$logf" | head -1 || true)
+                [ -n "$newurl" ] && { url="$newurl"; changed=1; }
               fi
               echo "${p}=${tpid}=${url}" >> "$tmpfile"
             done < /tmp/tunnels.env
@@ -479,23 +410,6 @@ jobs:
           echo "Running after-stop script..."
           sh -c "$AFTER_STOP" || true
 
-      # --- 12c. Dump Postgres database ---
-      - name: Dump Postgres database
-        if: always()
-        run: |
-          echo "Dumping PostgreSQL database..."
-          mkdir -p /tmp/pg_dump
-          pg_dump -h localhost -U neondb_owner -d neondb -p 5432 -F c -b -v -f /tmp/pg_dump/db.dump || true
-        env:
-          PGPASSWORD: npg_Q9mFPWfAVo7b
-
-      # --- 12d. Save DB Dump Cache ---
-      - name: Save DB Dump Cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/pg_dump
-          key: pg-dump-${{ inputs.project_id }}-${{ github.run_id }}-${{ github.run_attempt }}
       # --- 13. Notify Vercel app - stopped (always runs) ---
       - name: Notify webhook - stopped
         if: always()

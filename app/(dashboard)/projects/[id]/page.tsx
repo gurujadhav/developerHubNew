@@ -348,23 +348,52 @@ export default function ProjectPage() {
           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
             {liveLinks.length > 1 ? "Live URLs" : "Live URL"}
           </p>
-          {liveLinks.map((link) => (
-            <div key={`${link.port}-${link.url}`} className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs text-slate-500 font-mono">port {link.port}</p>
-                <p className="font-mono text-sm text-gold-400 truncate">{link.url}</p>
+          {liveLinks.map((link) => {
+            let customDomain = "";
+            if (link.port === 3000) {
+              customDomain = "labs.test.testifysamplee.com";
+            } else if (link.port === 4000) {
+              customDomain = "api.test.testifysamples.com";
+            }
+            return (
+              <div key={`${link.port}-${link.url}`} className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-slate-500 font-mono">port {link.port}</p>
+                    {customDomain && (
+                      <span className="text-[10px] bg-gold-500/10 border border-gold-500/20 text-gold-400 px-1.5 py-0.5 rounded font-mono">
+                        CF Custom Domain Mapped
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-mono text-sm text-gold-400 truncate">{link.url}</p>
+                  {customDomain && (
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+                      <span>Custom domain:</span>
+                      <a
+                        href={`https://${customDomain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono hover:text-gold-300 hover:underline transition-colors flex items-center gap-0.5"
+                      >
+                        {customDomain}
+                        <ExternalLink size={10} />
+                      </a>
+                    </div>
+                  )}
+                </div>
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary text-sm shrink-0"
+                >
+                  <ExternalLink size={14} />
+                  Open
+                </a>
               </div>
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary text-sm shrink-0"
-              >
-                <ExternalLink size={14} />
-                Open
-              </a>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
