@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Terminal,
   Trash2,
   Upload,
   Workflow,
@@ -121,6 +122,12 @@ export default function ProjectPage() {
   const [form, setForm] = useState<EditForm | null>(null);
   const envFileRef = useRef<HTMLInputElement>(null);
 
+  // Logs state
+  const [logs, setLogs] = useState<string>("");
+  const [logInterval, setLogInterval] = useState<"live" | "minute">("minute");
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const terminalRef = useRef<HTMLPreElement>(null);
+
   const fetchProject = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -138,9 +145,57 @@ export default function ProjectPage() {
 
   useEffect(() => {
     fetchProject();
-    const interval = setInterval(() => fetchProject(true), 10_000);
+    const interval = setInterval(() => fetchProject(true), 10000);
     return () => clearInterval(interval);
   }, [id]);
+
+  useEffect(() => {
+    let active = true;
+    let timer: NodeJS.Timeout;
+
+    const fetchLogs = async () => {
+      const isVisible = typeof document !== "undefined" && document.visibilityState === "visible";
+      if (!isVisible) return;
+
+      try {
+        const isLive = logInterval === "live";
+        const url = `/api/projects/${id}/logs${isLive ? "?live=true" : ""}`;
+        const res = await fetch(url);
+        if (res.ok && active) {
+          const data = await res.json();
+          setLogs(data.logs || "");
+        }
+      } catch (err) {
+        console.error("Error fetching logs:", err);
+      } finally {
+        if (active) setLoadingLogs(false);
+      }
+    };
+
+    fetchLogs();
+
+    const intervalMs = logInterval === "live" ? 3000 : 60000;
+    timer = setInterval(fetchLogs, intervalMs);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchLogs();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [id, logInterval]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [logs]);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -790,6 +845,72 @@ export default function ProjectPage() {
                 {new Date(project.updatedAt).toLocaleString()}
               </InfoRow>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logs Console */}
+      {!editing && (
+        <div className="card p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-navy-700/40 pb-4">
+            <div className="flex items-center gap-2">
+              <Terminal size={18} className="text-gold-500" />
+              <h3 className="section-title mb-0">App Logs Console</h3>
+              {logInterval === "live" ? (
+                <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/25 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live updates (3s)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs text-slate-400 bg-navy-800/60 px-2 py-0.5 rounded border border-navy-700 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                  Sleep mode (1 min)
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setLogInterval("minute")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                  logInterval === "minute"
+                    ? "border-gold-500/30 bg-gold-500/15 text-gold-400"
+                    : "border-navy-600 bg-transparent text-slate-400 hover:border-navy-500 hover:text-slate-300"
+                }`}
+              >
+                1 min logs
+              </button>
+              <button
+                onClick={() => setLogInterval("live")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                  logInterval === "live"
+                    ? "border-gold-500/30 bg-gold-500/15 text-gold-400"
+                    : "border-navy-600 bg-transparent text-slate-400 hover:border-navy-500 hover:text-slate-300"
+                }`}
+              >
+                Live logs (3s)
+              </button>
+            </div>
+          </div>
+
+          <div className="relative">
+            {loadingLogs ? (
+              <div className="flex flex-col items-center justify-center h-64 bg-navy-950/70 rounded-lg border border-navy-800/40">
+                <Loader2 size={24} className="text-gold-500 animate-spin mb-2" />
+                <span className="text-xs text-slate-500 font-mono">Loading logs from runner...</span>
+              </div>
+            ) : (
+              <pre
+                ref={terminalRef}
+                className="h-80 overflow-y-auto bg-navy-950 p-4 rounded-lg border border-navy-800/40 text-xs font-mono text-slate-300 leading-relaxed scrollbar-thin scrollbar-thumb-navy-700 whitespace-pre-wrap"
+              >
+                {logs ? (
+                  logs
+                ) : (
+                  <span className="text-slate-600 italic">No logs received yet. If the project was just deployed, wait a few moments for the startup process.</span>
+                )}
+              </pre>
+            )}
           </div>
         </div>
       )}

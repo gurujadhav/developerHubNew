@@ -6,6 +6,7 @@ import { cancelWorkflowRun } from "@/lib/github";
 import { normalizePorts } from "@/lib/ports";
 import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
 import { normalizeAfterScript, composeAfterScript } from "@/lib/afterScript";
+import { encrypt } from "@/lib/crypto";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -19,6 +20,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const project = await Project.findOne({ _id: id, userId }).select("-pat").lean();
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  if (project.cfWorkersKey) {
+    project.cfWorkersKey = "********";
+  }
 
   return NextResponse.json({ project });
 }
@@ -37,7 +42,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const body = await request.json();
   const allowedUpdates = ["name", "branch", "cfWorkersKey", "cfKvNamespaceId", "envVars", "portMappings"];
   for (const key of allowedUpdates) {
-    if (key in body) (project as any)[key] = body[key];
+    if (key in body) {
+      if (key === "cfWorkersKey") {
+        if (body[key] !== "********") {
+          project.cfWorkersKey = body[key] ? encrypt(body[key]) : null;
+        }
+      } else {
+        (project as any)[key] = body[key];
+      }
+    }
   }
 
   // Ports (1–5): keep `port` as the primary for backward compatibility.
@@ -73,6 +86,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   // Never return the stored PAT to the client.
   const safe = project.toObject();
   delete (safe as any).pat;
+  if (safe.cfWorkersKey) {
+    safe.cfWorkersKey = "********";
+  }
   return NextResponse.json({ project: safe });
 }
 

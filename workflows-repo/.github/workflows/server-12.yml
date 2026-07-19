@@ -144,9 +144,21 @@ jobs:
         env:
           ENV_B64: ${{ inputs.env_b64 }}
         run: |
+          echo "::add-mask::$ENV_B64"
           echo "$ENV_B64" | base64 -d > project/.env
           # Ensure a trailing newline so the final variable is well-formed.
           [ -n "$(tail -c1 project/.env)" ] && printf '\n' >> project/.env
+          
+          # Mask each environment variable value to prevent leaks in logs
+          while IFS='=' read -r key value || [ -n "$key" ]; do
+            [ -z "$key" ] && continue
+            [[ "$key" =~ ^# ]] && continue
+            if [ -n "$value" ]; then
+              value=$(echo "$value" | tr -d '\r')
+              echo "::add-mask::$value"
+            fi
+          done < project/.env
+          
           echo ".env written ($(grep -c '=' project/.env) variables, $(wc -c < project/.env) bytes)"
 
       # --- 7a. Install dependencies (Express) ---
@@ -196,6 +208,7 @@ jobs:
         env:
           PORTS: ${{ inputs.ports }}
           RUN_CMD: ${{ inputs.run_command }}
+          CF_KEY: ${{ inputs.cf_workers_key }}
         run: |
           PORTS=$(printf '%s' "$PORTS" | tr -d '[:space:]')
           IFS=',' read -ra PORT_ARR <<< "$PORTS"
@@ -213,13 +226,29 @@ jobs:
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
 
-          echo "Waiting for app on primary port $PRIMARY_PORT (timeout: 10m)..."
+          echo "Waiting for app on ports (timeout: 10m)..."
           for i in $(seq 1 120); do
-            if curl -sf "http://localhost:${PRIMARY_PORT}" > /dev/null 2>&1; then
-              echo "App is up after $((i * 5))s"
+            ports_ok=true
+            if [ -n "$CF_KEY" ]; then
+              for p in "${PORT_ARR[@]}"; do
+                [ -z "$p" ] && continue
+                if ! curl -sf "http://localhost:${p}" > /dev/null 2>&1; then
+                  ports_ok=false
+                  break
+                fi
+              done
+            else
+              if ! curl -sf "http://localhost:${PRIMARY_PORT}" > /dev/null 2>&1; then
+                ports_ok=false
+              fi
+            fi
+
+            if [ "$ports_ok" = "true" ]; then
+              echo "App ports are up and live after $((i * 5))s"
               APP_READY=true
               break
             fi
+
             if ! kill -0 "$APP_PID" 2>/dev/null; then
               echo "::error::App process died during startup"
               break
@@ -231,7 +260,7 @@ jobs:
           kill "$TAIL_PID" 2>/dev/null || true
 
           if [ -z "${APP_READY}" ]; then
-            echo "::error::App did not respond on port $PRIMARY_PORT within 10 minutes"
+            echo "::error::App did not respond on configured ports within 10 minutes"
             exit 1
           fi
 
@@ -257,10 +286,34 @@ jobs:
             echo "Starting Cloudflare persistent named tunnel..."
             nohup cloudflared tunnel run --token "$CF_KEY" --no-autoupdate > /tmp/tunnel_named.log 2>&1 &
             tpid=$!
+            
+            APP_API_URL=$(echo "${{ inputs.webhook_url }}" | sed 's|/webhook/update-link|/projects|')
+            PROJECT_DATA=$(curl -sL \
+              -H "x-internal-secret: ${{ inputs.webhook_secret }}" \
+              "$APP_API_URL" | python3 -c "
+            import json,sys
+            d=json.load(sys.stdin)
+            p=next((x for x in d.get('projects',[]) if str(x.get('_id',''))=='${{ inputs.project_id }}'),None)
+            print(json.dumps(p) if p else '{}')
+            " 2>/dev/null || echo '{}')
+            
             for p in "${PORT_ARR[@]}"; do
               [ -z "$p" ] && continue
-              echo "${p}=${tpid}=http://localhost:${p}" >> /tmp/tunnels.env
-              TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "http://localhost:${p}" '. + [{port:$port, url:$url}]')
+              domain=$(echo "$PROJECT_DATA" | python3 -c "
+              import json,sys
+              proj=json.load(sys.stdin)
+              mappings=proj.get('portMappings', [])
+              m=next((x for x in mappings if str(x.get('port',''))=='$p'), None)
+              print(m.get('domain','') if m else '')
+              " 2>/dev/null || true)
+              
+              if [ -n "$domain" ]; then
+                url="https://${domain}"
+              else
+                url="https://pending-domain-setup"
+              fi
+              echo "${p}=${tpid}=${url}" >> /tmp/tunnels.env
+              TUNNELS_JSON=$(echo "$TUNNELS_JSON" | jq -c --argjson port "$p" --arg url "$url" '. + [{port:$port, url:$url}]')
             done
           else
             echo "Starting Cloudflare quick tunnels..."
@@ -354,7 +407,41 @@ jobs:
           touch /tmp/app.log
           tail -F /tmp/app.log &
           TAIL_PID=$!
-          trap "kill $TAIL_PID 2>/dev/null || true" EXIT
+          
+          # Start background logging daemon
+          nohup python3 -c "
+          import time, urllib.request, json, os
+          project_id = '$PROJECT_ID'
+          webhook_secret = '$WEBHOOK_SECRET'
+          api_url = '$WEBHOOK_URL'.replace('/webhook/update-link', f'/projects/{project_id}/internal/logs')
+          
+          while True:
+              try:
+                  with open('/tmp/app.log', 'r') as f:
+                      lines = f.readlines()
+                      log_content = ''.join(lines[-500:])
+              except Exception as e:
+                  log_content = 'Error reading logs: ' + str(e)
+              
+              try:
+                  data = json.dumps({'logs': log_content}).encode('utf-8')
+                  req = urllib.request.Request(api_url, data=data, method='POST')
+                  req.add_header('Content-Type', 'application/json')
+                  req.add_header('x-internal-secret', webhook_secret)
+                  with urllib.request.urlopen(req, timeout=5) as r:
+                      resp = json.loads(r.read().decode())
+                      user_live = resp.get('userLive', False)
+              except Exception as e:
+                  user_live = False
+              
+              if user_live:
+                  time.sleep(3)
+              else:
+                  time.sleep(60)
+          " >/dev/null 2>&1 &
+          LOGS_DAEMON_PID=$!
+          
+          trap "kill $TAIL_PID $LOGS_DAEMON_PID 2>/dev/null || true" EXIT
 
           rebuild_json() {
             local tj="[]"

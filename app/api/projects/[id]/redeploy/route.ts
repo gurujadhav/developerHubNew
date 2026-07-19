@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
 import User from "@/lib/models/User";
 import { triggerDeployWorkflow, envVarsToBase64, cancelWorkflowRun } from "@/lib/github";
+import { decrypt } from "@/lib/crypto";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -28,7 +29,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const user = await User.findById(userId).select("cfWorkersKey");
   const envB64 = envVarsToBase64(project.envVars ?? []);
-  const effectiveCfKey = project.cfWorkersKey || user?.cfWorkersKey || "";
+  const decryptedUserCfKey = user?.cfWorkersKey ? decrypt(user.cfWorkersKey) : "";
+  const decryptedProjectCfKey = project.cfWorkersKey ? decrypt(project.cfWorkersKey) : "";
+  const effectiveCfKey = decryptedProjectCfKey || decryptedUserCfKey || "";
 
   // Mark as deploying and clear the previous failure before triggering.
   project.status = "deploying";

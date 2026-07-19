@@ -101,7 +101,7 @@ export default function SettingsPage() {
 
         <div className="space-y-4">
           <div>
-            <label className="input-label">CF Workers API Token</label>
+            <label className="input-label">CF Workers / Tunnel API Token (securely encrypted / write-only)</label>
             <div className="relative">
               <input
                 type={showKey ? "text" : "password"}

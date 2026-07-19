@@ -63,6 +63,8 @@ export interface IProject extends Document {
   lastCronRun: Date | null;
   deployedAt: Date | null;
   failureReason: string | null;
+  logs: string | null;
+  logsUserLiveAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -193,6 +195,8 @@ const ProjectSchema = new mongoose.Schema<IProject>(
     lastCronRun: { type: Date, default: null },
     deployedAt: { type: Date, default: null },
     failureReason: { type: String, default: null },
+    logs: { type: String, default: "" },
+    logsUserLiveAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

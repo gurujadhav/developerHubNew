@@ -6,6 +6,7 @@ import { triggerDeployWorkflow, envVarsToBase64, checkRepoAccess } from "@/lib/g
 import { normalizePorts } from "@/lib/ports";
 import { normalizeCommands, normalizeRunMode, composeRunCommand } from "@/lib/runCommand";
 import { normalizeAfterScript, composeAfterScript } from "@/lib/afterScript";
+import { encrypt, decrypt } from "@/lib/crypto";
 
 // GET /api/projects - list user's projects
 export async function GET(request: NextRequest) {
@@ -33,7 +34,14 @@ export async function GET(request: NextRequest) {
     .sort({ createdAt: -1 })
     .lean();
 
-  return NextResponse.json({ projects });
+  const maskedProjects = projects.map((p) => {
+    if (p.cfWorkersKey) {
+      return { ...p, cfWorkersKey: "********" };
+    }
+    return p;
+  });
+
+  return NextResponse.json({ projects: maskedProjects });
 }
 
 // POST /api/projects - create a new project and kick off deployment
@@ -136,7 +144,7 @@ export async function POST(request: NextRequest) {
       afterStopScript,
       port: ports[0],
       ports,
-      cfWorkersKey: cfWorkersKey || null,
+      cfWorkersKey: cfWorkersKey ? encrypt(cfWorkersKey) : null,
       cfKvNamespaceId: cfKvNamespaceId || null,
       portMappings: portMappings ?? [],
       status: "deploying",
@@ -144,7 +152,9 @@ export async function POST(request: NextRequest) {
 
     // Trigger master workflow to deploy
     const envB64 = envVarsToBase64(envVars ?? []);
-    const effectiveCfKey = cfWorkersKey || user?.cfWorkersKey || "";
+    const decryptedUserCfKey = user?.cfWorkersKey ? decrypt(user.cfWorkersKey) : "";
+    const decryptedProjectCfKey = cfWorkersKey || "";
+    const effectiveCfKey = decryptedProjectCfKey || decryptedUserCfKey || "";
 
     try {
       await triggerDeployWorkflow({

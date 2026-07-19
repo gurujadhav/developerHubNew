@@ -716,18 +716,18 @@ export default function NewProjectPage() {
             {/* CF Workers key */}
             <div>
               <label className="input-label">
-                Cloudflare Workers API Token{" "}
+                Cloudflare Tunnel / Workers Token{" "}
                 <span className="text-slate-600 font-normal normal-case">(optional)</span>
               </label>
               <input
                 type="password"
                 className="input"
-                placeholder="Your CF Workers API token"
+                placeholder="Your Cloudflare Token (e.g. Tunnel Token)"
                 value={form.cfWorkersKey}
                 onChange={(e) => update("cfWorkersKey", e.target.value)}
               />
               <p className="text-xs text-slate-600 mt-1.5">
-                If provided, your project gets a stable Cloudflare subdomain. Otherwise, a shared quick-tunnel URL is assigned.
+                One-time setup (stored securely, write-only; cannot be read back once saved). If provided, your project runs via your custom Cloudflare tunnel router.
               </p>
             </div>
 

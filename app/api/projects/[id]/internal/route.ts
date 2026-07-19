@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isValidObjectId } from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Project from "@/lib/models/Project";
+import { decrypt } from "@/lib/crypto";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -17,6 +18,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const project = await Project.findById(id).lean();
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  if (project.cfWorkersKey) {
+    project.cfWorkersKey = decrypt(project.cfWorkersKey);
+  }
 
   return NextResponse.json({ project });
 }
